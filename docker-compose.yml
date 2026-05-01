@@ -1,0 +1,18 @@
+services:
+  blebridge:
+    image: blebridge:latest
+    container_name: blebridge
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
