@@ -101,7 +101,6 @@ class BleBridge(QtCore.QThread):
     def update_ant(self):
 
         self.ant_send.TreadmillSpeed = self.ble_in.values[0] / 360  # m/s
-        self.ant_send.TreadmillDistance = self.ble_in.values[9]
 
     def run(self):
 

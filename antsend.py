@@ -28,10 +28,9 @@ class AntSend:
         self.Distance_Last = 0
         self.Speed_Last = 0
         self.TimeRollover = 0
-        self.treadmill_distance_old = 0
         self.TreadmillSpeed = 0  # m/s
         self.TreadmillCadence = 160
-        self.TreadmillDistance = 0
+        self.paused = True
 
         self.TimeProgramStart = time.time()
         self.LastTimeEvent = time.time()
@@ -52,7 +51,7 @@ class AntSend:
         self.ElapsedSeconds = time.time() - self.LastTimeEvent
         self.LastTimeEvent = time.time()
         UpdateLatency_7 += self.ElapsedSeconds  # 1Second / 32 = 0,03125
-        UL_7 = int(UpdateLatency_7 / 0.03125)
+        UL_7 = min(int(UpdateLatency_7 / 0.03125), 255)
 
         # Stride Count, Accumulated strides.
         # This value is incremented once for every two footfalls.
@@ -66,14 +65,8 @@ class AntSend:
 
         # DISTANCE
         # Accumulated distance, in m-Meters, Rollover = 256
-        # self.DistanceBetween = self.ElapsedSeconds * TreadmillSpeed
-        self.treadmill_distance_delta = self.TreadmillDistance - self.treadmill_distance_old
-        self.treadmill_distance_old = self.TreadmillDistance
-        self.DistanceAccu += (
-            self.treadmill_distance_delta
-        )  # Add Distance between 2 ANT+ Ticks to Accumulated Distance
-        if self.DistanceAccu > 255:
-            self.DistanceAccu -= 255
+        self.DistanceAccu += self.ElapsedSeconds * self.TreadmillSpeed
+        self.DistanceAccu %= 256
 
         self.distance_H = int(self.DistanceAccu)  # just round it to INT
         self.DistanceLow_HEX = int((self.DistanceAccu - self.distance_H) * 16)
@@ -139,59 +132,68 @@ class AntSend:
             if self.ANTMessageCount > 131:
                 self.ANTMessageCount = 0
 
+        if self.ANTMessageCount % 40 == 1:
+            print(f"[ANT+] speed={self.TreadmillSpeed:.3f}m/s distAccu={self.DistanceAccu:.2f} payload={[hex(b) for b in self.ANTMessagePayload]}")
         return self.ANTMessagePayload
 
     # TX Event
     def on_event_tx(self, data):
+        if self.paused:
+            return
         self.ANTMessagePayload = self.Create_Next_DataPage()
         self.ActualTime = time.time() - self.TimeProgramStart
 
-        # ANTMessagePayload = array.array('B', [1, 255, 133, 128, 8, 0, 128, 0])    # just for Debugging purpose
         try:
-            self.channel.send_broadcast_data(
-                self.ANTMessagePayload)
-        except OverflowError:
-            print('overflow-error: Watch disconnected?')
-            self.channel.close()
-            self.node.stop()
-            time.sleep(1)
-            print('restarting...')
-            self.openchanel(self.stop_event)
+            self.channel.send_broadcast_data(self.ANTMessagePayload)
+        except Exception as e:
+            print(f'ANT+ TX error ({type(e).__name__}: {e}), stopping node...')
+            try:
+                self.node.stop()
+            except Exception:
+                pass
 
     def node_handler(self):
         self.node.start()
 
     # Open Channel
     def openchanel(self):
-        print("ANT+ Channel is open")
+        while not self.stop_event.is_set():
+            print("ANT+ Channel is open")
+            try:
+                self.node = Node()
+                self.node.set_network_key(0x00, NETWORK_KEY)  # set network key
+                self.channel = self.node.new_channel(
+                    Channel.Type.BIDIRECTIONAL_TRANSMIT, 0x00, 0x00
+                )  # Set Channel, Master TX
+                self.channel.set_id(
+                    Device_Number, Device_Type, 5
+                )  # set channel id as <Device Number, Device Type, Transmission Type>
+                self.channel.set_period(Channel_Period)  # set Channel Period
+                self.channel.set_rf_freq(Channel_Frequency)  # set Channel Frequency
 
-        # self.node = Node()  # initialize the ANT+ device as node, now in init
-        # self.x = asyncio.create_task(self.run_ble())
+                self.channel.on_broadcast_tx_data = self.on_event_tx
 
-        # CHANNEL CONFIGURATION
-        self.node.set_network_key(0x00, NETWORK_KEY)  # set network key
-        self.channel = self.node.new_channel(
-            Channel.Type.BIDIRECTIONAL_TRANSMIT, 0x00, 0x00
-        )  # Set Channel, Master TX
-        self.channel.set_id(
-            Device_Number, Device_Type, 5
-        )  # set channel id as <Device Number, Device Type, Transmission Type>
-        self.channel.set_period(Channel_Period)  # set Channel Period
-        self.channel.set_rf_freq(Channel_Frequency)  # set Channel Frequency
-
-        # Callback function for each TX event
-        self.channel.on_broadcast_tx_data = self.on_event_tx
-
-        self.channel.open()  # Open the ANT-Channel with given configuration
-        node_thread = threading.Thread(target=self.node_handler)
-        node_thread.start()
-        while not self.stop_event.wait(1):
-            time.sleep(4)
-            # print("node läuft")
+                self.channel.open()  # Open the ANT-Channel with given configuration
+                node_thread = threading.Thread(target=self.node_handler, daemon=True)
+                node_thread.start()
+                while not self.stop_event.is_set() and node_thread.is_alive():
+                    node_thread.join(1)
+                if not self.stop_event.is_set():
+                    print("ANT+ node thread died, restarting...")
+                    time.sleep(2)
+            except Exception as e:
+                print(f'ANT+ setup error ({type(e).__name__}: {e}), retrying...')
+                try:
+                    self.node.stop()
+                except Exception:
+                    pass
+                time.sleep(2)
 
         print("Closing ANT+ Channel...")
-        self.channel.close()
-        self.node.stop()
-
+        try:
+            self.channel.close()
+            self.node.stop()
+        except Exception:
+            pass
         print("Closed ANT+ Channel...")
 ########################################################################################################################

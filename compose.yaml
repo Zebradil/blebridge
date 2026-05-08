@@ -1,6 +1,7 @@
 services:
   blebridge:
     image: blebridge:latest
+    build: .
     container_name: blebridge
     restart: unless-stopped
     network_mode: host

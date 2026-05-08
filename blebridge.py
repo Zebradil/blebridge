@@ -20,16 +20,6 @@ logging.basicConfig(level=logging.WARNING)
 _LOGGER = logging.getLogger(__name__)
 
 
-async def update_ant(ant_obj, values):
-
-    ant_send = ant_obj
-    try:
-        ant_send.TreadmillSpeed = values[0] / 360  # m/s
-        ant_send.TreadmillDistance = values[9]
-    except asyncio.CancelledError:
-        print("ant update was cancelled!")
-        raise asyncio.CancelledError
-
 
 async def update_ble_out(ble_in_obj,
                          ble_out_obj,
@@ -102,8 +92,19 @@ async def main():
         ble_in_thread.start()
         ble_out_thread.start()
 
+        _loop_count = 0
         while True:
             try:
+                _loop_count += 1
+                if _loop_count % 40 == 1:
+                    print(f"[main_loop] iter={_loop_count} id(ble_in)={id(ble_in)} id(values)={id(ble_in.values)} values={ble_in.values[:4]}")
+
+                if ble_in.connected:
+                    ant_send.TreadmillSpeed = ble_in.values[0] / 360  # m/s
+                    ant_send.paused = False
+                else:
+                    ant_send.TreadmillSpeed = 0
+                    ant_send.paused = True
 
                 task2 = asyncio.create_task(update_ble_out(ble_in,
                                                            ble_out,
@@ -111,14 +112,13 @@ async def main():
                                                            ble_in.ftms_status_value,
                                                            ble_in.training_status_value,
                                                            ftms.ftms_control_value))
-                task1 = asyncio.create_task(update_ant(ant_send, ble_in.values))
                 task3 = asyncio.create_task(move_on(0.25))
 
                 await asyncio.gather(*[task2, task3])
             except MoveOnError:
                 pass
 
-            for task in [task1, task2, task3]:
+            for task in [task2, task3]:
                 if task.done() is False:
                     task.cancel()
 
