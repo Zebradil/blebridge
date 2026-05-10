@@ -1,18 +1,17 @@
 [tools]
-python = "3.14.4"
 uv = "latest"
 
 [tasks.setup]
 description = "Install dependencies"
-run = "uv sync --all-extras"
+run = "uv-fhs sync --all-extras"
 
 [tasks.run]
 description = "Run the blebridge application locally"
-run = "uv run python -m blebridge"
+run = "uv-fhs run python -m blebridge"
 
 [tasks.gui]
 description = "Run the optional UI locally"
-run = "uv run python -m blebridge.gui2"
+run = "uv-fhs run python -m blebridge.gui2"
 
 [tasks.build]
 description = "Build the docker image for arm64"
