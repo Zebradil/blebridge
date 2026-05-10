@@ -1,6 +1,5 @@
 .git
 .gitignore
-README.md
 gui2.py
 qt_brigde.py
 __pycache__
