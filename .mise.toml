@@ -15,6 +15,7 @@ run = "uv-fhs run python -m blebridge.gui2"
 
 [tasks.build]
 description = "Build the docker image for arm64"
+env = { DOCKER_HOST = '' }
 run = "docker buildx build --platform linux/arm64 -t blebridge:latest --output type=docker,dest=blebridge.tar ."
 
 [tasks.deploy]
