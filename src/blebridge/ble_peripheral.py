@@ -8,8 +8,8 @@ import struct
 from bluezero import adapter
 from bluezero import peripheral
 
-import ftms
-from ftms import services
+from . import ftms
+from .ftms import services
 import threading
 
 

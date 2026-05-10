@@ -3,12 +3,12 @@ import asyncio
 import threading
 
 
-import ftms
-from antsend import AntSend
+from . import ftms
+from .antsend import AntSend
 from bluezero import adapter
 
-from ble_peripheral import FtmsPeripheral
-from ble_central import BleCentral
+from .ble_peripheral import FtmsPeripheral
+from .ble_central import BleCentral
 
 # BLE-Adapter for connection to FTMS (0 or 1)
 # BLE-Adapter for connection to mobile will be the other one (1 or 0)

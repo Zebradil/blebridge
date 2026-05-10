@@ -1,4 +1,4 @@
-from utils import str_to_byte_arr
+from .utils import str_to_byte_arr
 import dbus
 import struct
 from bluezero import async_tools

@@ -1,0 +1,30 @@
+[tools]
+python = "3.14.4"
+uv = "latest"
+
+[tasks.setup]
+description = "Install dependencies"
+run = "uv sync --all-extras"
+
+[tasks.run]
+description = "Run the blebridge application locally"
+run = "uv run python -m blebridge"
+
+[tasks.gui]
+description = "Run the optional UI locally"
+run = "uv run python -m blebridge.gui2"
+
+[tasks.build]
+description = "Build the docker image for arm64"
+run = "docker buildx build --platform linux/arm64 -t blebridge:latest --output type=docker,dest=blebridge.tar ."
+
+[tasks.deploy]
+description = "Deploy the application using docker compose"
+run = '''
+docker load -i blebridge.tar
+docker compose up -d
+'''
+
+[tasks.logs]
+description = "Tail docker compose logs"
+run = "docker compose logs -f"

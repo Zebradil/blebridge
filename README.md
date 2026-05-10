@@ -52,10 +52,10 @@ All configuration is in the source files. Key settings:
 
 | Setting                 | File              | Description                                                                                                                                                                                 |
 | ----------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `x = 0`                 | `blebridge.py:14` | Which adapter index is used as BLE peripheral (the other is used for FTMS central). Set to `0` or `1` based on your adapter ordering. Verify with `bluetoothctl list` inside the container. |
-| `Device_Number = 12345` | `antsend.py:13`   | ANT+ device number the Garmin watch pairs with                                                                                                                                              |
-| Speed range             | `ftms.py`         | 1–16 km/h                                                                                                                                                                                   |
-| Incline range           | `ftms.py`         | 0–10%                                                                                                                                                                                       |
+| `x = 0`                 | `src/blebridge/__main__.py:14` | Which adapter index is used as BLE peripheral (the other is used for FTMS central). Set to `0` or `1` based on your adapter ordering. Verify with `bluetoothctl list` inside the container. |
+| `Device_Number = 12345` | `src/blebridge/antsend.py:13`   | ANT+ device number the Garmin watch pairs with                                                                                                                                              |
+| Speed range             | `src/blebridge/ftms.py`         | 1–16 km/h                                                                                                                                                                                   |
+| Incline range           | `src/blebridge/ftms.py`         | 0–10%                                                                                                                                                                                       |
 
 ## Deployment
 
@@ -82,12 +82,7 @@ docker run --privileged --rm tonistiigi/binfmt --install arm64
 ### 3. Build the arm64 image
 
 ```bash
-# Create a builder that supports cross-compilation
-docker buildx create --name multiarch --driver docker-container --use
-
-# Build and export to a tar file
-docker buildx build --platform linux/arm64 -t blebridge:latest \
-  --output type=docker,dest=blebridge.tar .
+mise run build
 ```
 
 ### 4. Load the image on the Pi
@@ -101,14 +96,13 @@ docker load -i blebridge.tar
 Run from the cloned repo directory — `docker compose` uses the local `compose.yaml` and `DOCKER_HOST` routes commands to the Pi:
 
 ```bash
-cd /path/to/blebridge
-docker compose up -d
+mise run deploy
 ```
 
 ### 6. Check logs
 
 ```bash
-docker compose logs -f
+mise run logs
 ```
 
 Expected output when everything works:
@@ -149,7 +143,7 @@ Check adapter order inside the container:
 docker exec blebridge bluetoothctl list
 ```
 
-If adapters are in the wrong order, change `x` in `blebridge.py` (0 or 1) and rebuild.
+If adapters are in the wrong order, change `x` in `src/blebridge/__main__.py` (0 or 1) and rebuild.
 
 **Treadmill not found (scanning indefinitely)**
 

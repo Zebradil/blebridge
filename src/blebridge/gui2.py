@@ -1,10 +1,10 @@
 import sys
-import qt_brigde
+from . import qt_brigde
 
 from PyQt5 import QtWidgets, QtGui
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QSizePolicy
-from qt_brigde import BleBridge
+from .qt_brigde import BleBridge
 
 
 class TreadmillGUI(QtWidgets.QWidget):

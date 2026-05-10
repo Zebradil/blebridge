@@ -4,12 +4,12 @@ import time
 
 from PyQt5 import QtCore
 
-import ftms
-from antsend import AntSend
+from . import ftms
+from .antsend import AntSend
 from bluezero import adapter
 
-from ble_peripheral import FtmsPeripheral
-from ble_central import BleCentral
+from .ble_peripheral import FtmsPeripheral
+from .ble_central import BleCentral
 
 
 logging.basicConfig(level=logging.WARNING)
