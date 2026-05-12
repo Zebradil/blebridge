@@ -45,6 +45,7 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgirepository-1.0-1 \
+    gir1.2-glib-2.0 \
     libcairo2 \
     libdbus-1-3 \
     libdbus-glib-1-2 \
