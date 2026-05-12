@@ -48,7 +48,7 @@ class AntSend:
         self.ANTMessageCount += 1
 
         # Time Calculations
-        self.ElapsedSeconds = time.time() - self.LastTimeEvent
+        self.ElapsedSeconds = min(time.time() - self.LastTimeEvent, 1.0)
         self.LastTimeEvent = time.time()
         UpdateLatency_7 += self.ElapsedSeconds  # 1Second / 32 = 0,03125
         UL_7 = min(int(UpdateLatency_7 / 0.03125), 255)
@@ -60,8 +60,7 @@ class AntSend:
             self.StridesDone += 1
             self.LastStrideTime -= StrideCountUpValue
         self.LastStrideTime += self.ElapsedSeconds
-        if self.StridesDone > 255:
-            self.StridesDone -= 255
+        self.StridesDone %= 256
 
         # DISTANCE
         # Accumulated distance, in m-Meters, Rollover = 256
@@ -79,16 +78,10 @@ class AntSend:
         # TIME (changes to Distance or speed will affect if This byte needs to be calculated (<= check Specification)
         if self.Speed_Last != self.TreadmillSpeed or self.Distance_Last != self.DistanceAccu:
             self.TimeRollover += self.ElapsedSeconds
-            if self.TimeRollover > 255:
-                self.TimeRollover -= 255
+            self.TimeRollover %= 256
 
         self.TimeRollover_H = int(self.TimeRollover)
-        # only integer
-        if self.TimeRollover_H > 255:
-            self.TimeRollover_H = 255
         self.TimeRollover_L_HEX = int((self.TimeRollover - self.TimeRollover_H) * 200)
-        if self.TimeRollover_L_HEX > 255:
-            self.TimeRollover_L_HEX -= 255
 
         self.Speed_Last = self.TreadmillSpeed
         self.Distance_Last = self.DistanceAccu
@@ -144,7 +137,7 @@ class AntSend:
         self.ActualTime = time.time() - self.TimeProgramStart
 
         try:
-            self.channel.send_broadcast_data(self.ANTMessagePayload)
+            self.channel.send_broadcast_data([b & 0xFF for b in self.ANTMessagePayload])
         except Exception as e:
             print(f'ANT+ TX error ({type(e).__name__}: {e}), stopping node...')
             try:

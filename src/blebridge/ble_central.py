@@ -273,8 +273,6 @@ class BleCentral:
                 offset += 2
 
         self.values = values
-        if values[0] == 0 and self._dbg_count > 5:
-            print(f"[FTMS_ZERO] flags=0x{flags:04X} payload_len={len(raw)-2} raw_hex={raw.hex()} call={self._dbg_count}")
         if _log_this:
             print(f"[FTMS] flags=0x{flags:04X} payload_len={len(raw)-2} id(self)={id(self)} id(self.values)={id(self.values)} values={values[:4]}")
 
