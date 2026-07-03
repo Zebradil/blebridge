@@ -78,10 +78,20 @@ lives in `tests/test_ftms_fixtures.py`; run it to validate this format.
 - `supported_inclination_range_2ad5` — 6 bytes: min (sint16), max (sint16),
   increment (uint16), all 0.1 %.
 
-**The declared range can be wrong.** `session-20260703.jsonl` reports
-`2ad4` max = 8.00 km/h, but the physical belt goes to 12.00 km/h. Speed
-extraction must NOT clamp to `2ad4`, and range-proxy code cannot trust it as
-the true maximum — verify against `2acd` Instantaneous Speed samples instead.
+**`2ad4` reflects the treadmill's active mode, read fresh at connect.** This
+device has two modes selected by the handrail position: walking (1–8 km/h)
+and running (1–12 km/h). It reports the range for whichever mode is active
+when the BLE central connects:
+
+| Fixture                             | Mode    | `2ad4` max | `2acd` max speed seen |
+|-------------------------------------|---------|------------|-----------------------|
+| `session-20260703.jsonl`            | walking | 8.00 km/h  | 4.0 km/h              |
+| `session-20260703-highspeed.jsonl`  | running | 12.00 km/h | 12.0 km/h             |
+
+So `2ad4` is trustworthy *for the current session*, but not a fixed device
+constant — reconnecting after a mode change yields a different range. Speed
+extraction must still not clamp to it; the running-mode fixture shows `2acd`
+Instantaneous Speed reaching 12.0 (34 frames above the walking-mode 8.00).
 
 ## Capturing a session
 
