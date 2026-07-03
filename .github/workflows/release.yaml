@@ -20,8 +20,8 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@v4
-      # No libusb yet, so a plain static musl build suffices.
-      # When the ANT+ slice adds libusb, switch to vendored libusb (libusb1-sys "vendored" feature).
+      # libusb is vendored (libusb1-sys "vendored" feature), so the static
+      # musl build needs no system libusb.
       - uses: taiki-e/install-action@v2
         with:
           tool: cross

@@ -6,5 +6,10 @@ description = "Bridges a BLE FTMS treadmill to ANT+ Garmin watches and BLE mobil
 license = "MIT"
 
 [dependencies]
+# ant-rs is not published on crates.io; pinned per ADR-0001 (vendor/fork if abandoned)
+ant = { git = "https://github.com/cujomalainey/ant-rs", rev = "8728fa366524f5b39488bfc08e7f6337a57da064" }
+rusb = "0.9"
+# vendored: build libusb from source so the static musl release build works
+libusb1-sys = { version = "0.7", features = ["vendored"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
