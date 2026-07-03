@@ -78,13 +78,48 @@ lives in `tests/test_ftms_fixtures.py`; run it to validate this format.
 - `supported_inclination_range_2ad5` — 6 bytes: min (sint16), max (sint16),
   increment (uint16), all 0.1 %.
 
+**`2ad4` reflects the treadmill's active mode, read fresh at connect.** This
+device has two modes selected by the handrail position: walking (1–8 km/h)
+and running (1–12 km/h). It reports the range for whichever mode is active
+when the BLE central connects:
+
+| Fixture                             | Mode    | `2ad4` max | `2acd` max speed seen |
+|-------------------------------------|---------|------------|-----------------------|
+| `session-20260703.jsonl`            | walking | 8.00 km/h  | 4.0 km/h              |
+| `session-20260703-highspeed.jsonl`  | running | 12.00 km/h | 12.0 km/h             |
+
+So `2ad4` is trustworthy *for the current session*, but not a fixed device
+constant — reconnecting after a mode change yields a different range. Speed
+extraction must still not clamp to it; the running-mode fixture shows `2acd`
+Instantaneous Speed reaching 12.0 (34 frames above the walking-mode 8.00).
+
 ## Capturing a session
 
-On the Pi (bluezero installed, treadmill powered on):
+The Pi host has no `bluezero`; run the capture inside the deployed
+`blebridge` image (it has the deps + D-Bus access). One physical treadmill
+allows one BLE central, so stop the running bridge first, then restart it.
+
+On the Pi:
 
 ```bash
-python3 tools/capture_ftms.py --out tests/fixtures/ftms/session-$(date +%Y%m%d).jsonl
+# copy the tool onto the Pi once (from a repo checkout)
+scp tools/capture_ftms.py suok@<pi>:~/capture_ftms.py
+
+# stop bridge (frees treadmill) -> capture -> always restart bridge
+docker stop blebridge && \
+docker run --rm -it --network host --cap-add NET_ADMIN \
+  -v /var/run/dbus:/var/run/dbus \
+  -v ~/capture_ftms.py:/capture_ftms.py \
+  -v ~/ftms:/out \
+  blebridge:latest \
+  python3 /capture_ftms.py --adapter 00:1A:7D:DA:71:0B \
+    --out /out/session-$(date +%Y%m%d).jsonl ; \
+docker start blebridge
+
+# pull the fixture back into the repo
+scp suok@<pi>:~/ftms/session-*.jsonl tests/fixtures/ftms/
 ```
 
-Cover at least: belt stopped, two distinct speeds, and a speed transition.
+`--adapter` is the USB dongle MAC; omit to use the first adapter. Cover at
+least: belt stopped, two distinct speeds, and a speed transition (ramp).
 Type the console speed + Enter whenever the display changes; `q` to finish.
