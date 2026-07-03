@@ -1,0 +1,21 @@
+# Deploy the Rust bridge from the image published by the release workflow.
+# Usage on the Pi: docker compose -f compose.rust.yaml pull && up -d
+# Python compose.yaml is left untouched so the old flow still works.
+services:
+  blebridge:
+    image: ghcr.io/zebradil/blebridge:latest
+    container_name: blebridge
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

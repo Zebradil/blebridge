@@ -25,6 +25,13 @@ docker load -i blebridge.tar
 docker compose up -d
 '''
 
+[tasks.deploy-rust]
+description = "Deploy the Rust bridge from the published ghcr image"
+run = '''
+docker compose -f compose.rust.yaml pull
+docker compose -f compose.rust.yaml up -d
+'''
+
 [tasks.logs]
 description = "Tail docker compose logs"
 run = "docker compose logs -f"
