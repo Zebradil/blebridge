@@ -1,0 +1,10 @@
+[package]
+name = "blebridge"
+version = "0.1.0"
+edition = "2021"
+description = "Bridges a BLE FTMS treadmill to ANT+ Garmin watches and BLE mobile apps"
+license = "MIT"
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
