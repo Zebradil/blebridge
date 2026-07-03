@@ -1,0 +1,7 @@
+# Raw FTMS passthrough to Mobile Apps
+
+The bridge forwards the Treadmill's FTMS notification frames (2ACD, 2ADA, 2AD3) and Control Point traffic verbatim between Treadmill and Mobile Apps, parsing nothing on that path. Only the ANT Broadcaster parses — and only the instantaneous speed field it needs for SDM pages.
+
+The Python version parsed frames into a 10-element array and re-packed a fixed-format frame with a hardcoded flags word, silently dropping fields (average speed, pace, elevation, MET) and risking mismatch with the treadmill's actual layout. Passthrough gives perfect fidelity with less code. The trade-off: a future UI wanting rich metrics must parse frames itself (or parsing gets added then — deliberately deferred).
+
+A deliberate consequence of the same philosophy: when no Treadmill is connected, the ANT Broadcaster stays silent rather than transmitting zero-speed pages. The sensor's absence on the Watch is the diagnostic signal that the treadmill isn't connected; a zero-speed broadcast would mask failures. The BLE App Endpoint, by contrast, keeps advertising while idle because FTMS can express "no data" in-band and a future UI needs to reach the bridge exactly when nothing is connected.
