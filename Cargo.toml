@@ -11,5 +11,15 @@ ant = { git = "https://github.com/cujomalainey/ant-rs", rev = "8728fa366524f5b39
 rusb = "0.9"
 # vendored: build libusb from source so the static musl release build works
 libusb1-sys = { version = "0.7", features = ["vendored"] }
+# BLE central toward the treadmill (ADR-0001). bluetoothd talks to BlueZ over D-Bus.
+bluer = { version = "0.17", features = ["bluetoothd"] }
+# vendored: build libdbus from source so the static musl release build works
+# (same rationale as libusb1-sys above; bluer links libdbus underneath).
+libdbus-sys = { version = "0.2", features = ["vendored"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "net", "time"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+serde_json = "1"

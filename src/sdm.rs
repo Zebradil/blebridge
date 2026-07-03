@@ -10,8 +10,6 @@ pub const CADENCE_SPM: f64 = 160.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Event {
     TreadmillConnected,
-    // ponytail: only tests disconnect until the Treadmill Link slice lands.
-    #[allow(dead_code)]
     TreadmillDisconnected,
     /// Instantaneous speed in m/s.
     SpeedUpdated(f64),

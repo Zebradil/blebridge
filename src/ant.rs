@@ -2,6 +2,7 @@
 //! stick using the ant-rs message layer and USB driver. Blocking; owns the
 //! calling thread.
 
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ant::drivers::{is_ant_usb_device_from_device, Driver, UsbDriver};
@@ -41,13 +42,13 @@ enum SessionEnd {
 /// Run the ANT Broadcaster until the process ends. Transient errors retry
 /// with capped backoff; persistent setup failure exits nonzero (crash-only,
 /// Docker restarts us).
-pub fn run(mut core: SdmCore, device_number: u16) -> ! {
+pub fn run(core: Arc<Mutex<SdmCore>>, device_number: u16) -> ! {
     let start = Instant::now();
     let mut backoff = Duration::from_secs(1);
     let mut setup_failures = 0u32;
 
     loop {
-        match session(&mut core, device_number, start) {
+        match session(&core, device_number, start) {
             SessionEnd::NoStick => {
                 // A replugged stick is a fresh start, not a repeat failure.
                 setup_failures = 0;
@@ -86,7 +87,7 @@ fn find_stick() -> Option<Device<GlobalContext>> {
     devices.iter().find(is_ant_usb_device_from_device)
 }
 
-fn session(core: &mut SdmCore, device_number: u16, start: Instant) -> SessionEnd {
+fn session(core: &Arc<Mutex<SdmCore>>, device_number: u16, start: Instant) -> SessionEnd {
     let Some(device) = find_stick() else {
         return SessionEnd::NoStick;
     };
@@ -109,7 +110,11 @@ fn session(core: &mut SdmCore, device_number: u16, start: Instant) -> SessionEnd
                 if let RxMessage::ChannelEvent(ev) = &msg.message {
                     if ev.payload.message_code == MessageCode::EventTx {
                         let timestamp = start.elapsed().as_secs_f64();
-                        if let Some(page) = core.handle(Event::TxRequested { timestamp }) {
+                        let page = core
+                            .lock()
+                            .unwrap()
+                            .handle(Event::TxRequested { timestamp });
+                        if let Some(page) = page {
                             let data = BroadcastData::new(CHANNEL, page);
                             if let Err(e) = driver.send_message(&data) {
                                 return SessionEnd::TxFailed(format!("{e:?}"));
