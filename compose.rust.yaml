@@ -1,9 +1,11 @@
-# Deploy the Rust bridge from the image published by the release workflow.
-# Usage on the Pi: docker compose -f compose.rust.yaml pull && up -d
-# Python compose.yaml is left untouched so the old flow still works.
+# Developer deploy: run the locally built Rust image on the Pi.
+# Driven by `mise run deploy-rust`, which cross-builds `blebridge:local`,
+# loads the tar onto the Pi (via DOCKER_HOST), then `up -d` here.
+# pull_policy:never keeps the Pi from reaching ghcr for this local-only tag.
 services:
   blebridge:
-    image: ghcr.io/zebradil/blebridge:latest
+    image: blebridge:local
+    pull_policy: never
     container_name: blebridge
     restart: unless-stopped
     network_mode: host

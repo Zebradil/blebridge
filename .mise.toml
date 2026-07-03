@@ -25,11 +25,63 @@ docker load -i blebridge.tar
 docker compose up -d
 '''
 
-[tasks.deploy-rust]
-description = "Deploy the Rust bridge from the published ghcr image"
+[tasks.build-rust]
+description = "Build the Rust bridge into a local docker image tar via nix pkgsCross (TARGET_ARCH=arm64|amd64)"
+# Default local build: nix pkgsCross produces the static-musl binary (no docker,
+# no rustup), then buildx wraps it in the FROM-scratch Dockerfile.rust. buildx is
+# the only docker step, so DOCKER_HOST='' forces it LOCAL (even though .envrc
+# points DOCKER_HOST at the Pi). dist/<arch>/blebridge layout matches CI.
+env = { DOCKER_HOST = '' }
 run = '''
-docker compose -f compose.rust.yaml pull
+set -euo pipefail
+TARGET_ARCH="${TARGET_ARCH:-arm64}"
+case "$TARGET_ARCH" in
+  arm64|amd64) ;;
+  *) echo "TARGET_ARCH must be arm64 or amd64, got: $TARGET_ARCH" >&2; exit 1 ;;
+esac
+nix build ".#packages.x86_64-linux.blebridge-$TARGET_ARCH" -L --out-link "result-$TARGET_ARCH"
+mkdir -p "dist/$TARGET_ARCH"
+cp -f "result-$TARGET_ARCH/bin/blebridge" "dist/$TARGET_ARCH/blebridge"
+chmod +w "dist/$TARGET_ARCH/blebridge"
+docker buildx build --platform "linux/$TARGET_ARCH" -f Dockerfile.rust \
+  --output type=docker,dest=blebridge-rust.tar -t blebridge:local dist
+'''
+
+[tasks.build-rust-cross]
+description = "Parity path: build via `cross` like CI (run from a CLEAN shell, needs vanilla rustup)"
+# cross assumes a vanilla host; it breaks inside this nix devshell (leaked nix
+# compiler env + nix-wrapped rustup). Kept for parity with the CI release job.
+env = { DOCKER_HOST = '' }
+run = '''
+set -euo pipefail
+TARGET_ARCH="${TARGET_ARCH:-arm64}"
+case "$TARGET_ARCH" in
+  arm64) triple=aarch64-unknown-linux-musl ;;
+  amd64) triple=x86_64-unknown-linux-musl ;;
+  *) echo "TARGET_ARCH must be arm64 or amd64, got: $TARGET_ARCH" >&2; exit 1 ;;
+esac
+cross build --release --target "$triple"
+mkdir -p "dist/$TARGET_ARCH"
+cp -f "target/$triple/release/blebridge" "dist/$TARGET_ARCH/blebridge"
+docker buildx build --platform "linux/$TARGET_ARCH" -f Dockerfile.rust \
+  --output type=docker,dest=blebridge-rust.tar -t blebridge:local dist
+'''
+
+[tasks.deploy-rust]
+description = "Build the Rust bridge locally, load it onto the Pi, and deploy (TARGET_ARCH=arm64|amd64)"
+depends = ["build-rust"]
+# No DOCKER_HOST override here: load + compose run against the Pi from .envrc.
+run = '''
+set -euo pipefail
+docker load -i blebridge-rust.tar
 docker compose -f compose.rust.yaml up -d
+'''
+
+[tasks.deploy-rust-ghcr]
+description = "Deploy the Rust bridge from the published ghcr image (end-user path)"
+run = '''
+docker compose -f compose.example.yaml pull
+docker compose -f compose.example.yaml up -d
 '''
 
 [tasks.logs]

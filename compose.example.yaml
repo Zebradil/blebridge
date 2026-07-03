@@ -1,0 +1,22 @@
+# End-user deploy: run the Rust bridge from the image published to ghcr by the
+# release workflow. Copy this file to your host and:
+#   docker compose -f compose.example.yaml pull && docker compose -f compose.example.yaml up -d
+# Developers use compose.rust.yaml + `mise run deploy-rust` for a locally built image instead.
+services:
+  blebridge:
+    image: ghcr.io/zebradil/blebridge:latest
+    container_name: blebridge
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

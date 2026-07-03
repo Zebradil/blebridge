@@ -1,3 +1,7 @@
 .envrc
 blebridge.tar
+blebridge-rust.tar
+/dist
 /target
+/result
+/result-*
