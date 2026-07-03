@@ -78,13 +78,38 @@ lives in `tests/test_ftms_fixtures.py`; run it to validate this format.
 - `supported_inclination_range_2ad5` — 6 bytes: min (sint16), max (sint16),
   increment (uint16), all 0.1 %.
 
+**The declared range can be wrong.** `session-20260703.jsonl` reports
+`2ad4` max = 8.00 km/h, but the physical belt goes to 12.00 km/h. Speed
+extraction must NOT clamp to `2ad4`, and range-proxy code cannot trust it as
+the true maximum — verify against `2acd` Instantaneous Speed samples instead.
+
 ## Capturing a session
 
-On the Pi (bluezero installed, treadmill powered on):
+The Pi host has no `bluezero`; run the capture inside the deployed
+`blebridge` image (it has the deps + D-Bus access). One physical treadmill
+allows one BLE central, so stop the running bridge first, then restart it.
+
+On the Pi:
 
 ```bash
-python3 tools/capture_ftms.py --out tests/fixtures/ftms/session-$(date +%Y%m%d).jsonl
+# copy the tool onto the Pi once (from a repo checkout)
+scp tools/capture_ftms.py suok@<pi>:~/capture_ftms.py
+
+# stop bridge (frees treadmill) -> capture -> always restart bridge
+docker stop blebridge && \
+docker run --rm -it --network host --cap-add NET_ADMIN \
+  -v /var/run/dbus:/var/run/dbus \
+  -v ~/capture_ftms.py:/capture_ftms.py \
+  -v ~/ftms:/out \
+  blebridge:latest \
+  python3 /capture_ftms.py --adapter 00:1A:7D:DA:71:0B \
+    --out /out/session-$(date +%Y%m%d).jsonl ; \
+docker start blebridge
+
+# pull the fixture back into the repo
+scp suok@<pi>:~/ftms/session-*.jsonl tests/fixtures/ftms/
 ```
 
-Cover at least: belt stopped, two distinct speeds, and a speed transition.
+`--adapter` is the USB dongle MAC; omit to use the first adapter. Cover at
+least: belt stopped, two distinct speeds, and a speed transition (ramp).
 Type the console speed + Enter whenever the display changes; `q` to finish.
