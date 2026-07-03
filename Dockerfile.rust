@@ -1,0 +1,6 @@
+# Minimal image for the Rust bridge. Build context is a directory containing
+# prebuilt static musl binaries at <TARGETARCH>/blebridge (see release workflow).
+FROM scratch
+ARG TARGETARCH
+COPY ${TARGETARCH}/blebridge /blebridge
+ENTRYPOINT ["/blebridge"]
