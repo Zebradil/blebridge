@@ -20,19 +20,37 @@ mise run run
 
 Requires two Bluetooth adapters, an ANT+ USB stick, BlueZ, D-Bus, and Python deps from `pyproject.toml`.
 
-## Building and Deploying (Docker, arm64)
+## Building and Deploying (Docker)
+
+The Rust bridge is the deployment target (see `docs/adr/0001-rust-rewrite.md`);
+the Python flow below it is legacy, kept until one walk session validates Rust.
+
+Rust — build locally and push to the Pi (`DOCKER_HOST` from `.envrc`):
 
 ```bash
-# Build for Raspberry Pi
-docker buildx create --name multiarch --driver docker-container --use || true
-mise run build
-
-# Deploy: requires DOCKER_HOST set (e.g. via .envrc) to point at the Pi
-mise run deploy
+mise run build-rust        # nix pkgsCross -> static-musl binary -> blebridge:local tar (TARGET_ARCH=arm64|amd64, default arm64)
+mise run deploy-rust        # build-rust, then load the tar onto the Pi and `compose -f compose.rust.yaml up -d`
 mise run logs
 ```
 
-No automated tests or linting pipeline exists.
+- `build-rust` uses **nix pkgsCross**, not `cross`: on a nix-managed host the
+  devshell's nix compiler env leaks into `cross`'s build container and breaks it.
+  `mise run build-rust-cross` keeps the CI `cross` recipe for a clean shell.
+- Deploy paths: `deploy-rust` = locally built `blebridge:local` (dev,
+  `compose.rust.yaml`, `pull_policy: never`); `deploy-rust-ghcr` = published
+  ghcr image (end users copy `compose.example.yaml`).
+- Buildx runs locally (`DOCKER_HOST=''` in the task); load + compose target the
+  Pi. No QEMU needed — the cross-compile is static musl, not emulation.
+
+Legacy Python (arm64, QEMU-emulated build):
+
+```bash
+docker buildx create --name multiarch --driver docker-container --use || true
+mise run build && mise run deploy && mise run logs
+```
+
+CI: `.github/workflows/ci.yaml` (Rust checks) and `release.yaml` (tagged
+`cross` build + multi-arch ghcr push).
 
 ## Architecture
 

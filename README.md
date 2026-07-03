@@ -31,7 +31,14 @@ The Raspberry Pi 3B has one onboard Bluetooth adapter (hci0, BT 5.0). A second U
 - BlueZ running (`systemctl status bluetooth`)
 - Two Bluetooth adapters and one ANT+ USB stick connected
 
-**On the build machine:**
+**On the build machine (Rust, recommended):**
+
+- Nix with flakes (provides the toolchain via the repo devshell / direnv)
+- Docker with buildx (used only to wrap the prebuilt binary in a scratch image)
+
+No QEMU needed — the Rust cross-compile is static musl, not emulation.
+
+**On the build machine (legacy Python):**
 
 - Docker with buildx
 - QEMU binfmt registered for arm64 (see build steps below)
@@ -71,38 +78,50 @@ EOF
 sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=0fcf
 ```
 
-### 2. Register QEMU on the build machine
+### 2. Build and deploy the Rust bridge
 
-The Pi is arm64 but the build machine may be x86_64. Register QEMU to enable cross-compilation:
-
-```bash
-docker run --privileged --rm tonistiigi/binfmt --install arm64
-```
-
-### 3. Build the arm64 image
+The Rust bridge is the deployment target (see `docs/adr/0001-rust-rewrite.md`).
+Build the image locally and push it to the Pi in one step — no building on the
+resource-constrained Pi:
 
 ```bash
-mise run build
+mise run deploy-rust          # cross-builds blebridge:local, loads it onto the Pi, then `up -d`
 ```
 
-### 4. Load the image on the Pi
+Under the hood `deploy-rust` runs `build-rust` (nix pkgsCross → static-musl
+binary → `blebridge:local` image tar via buildx) and then loads the tar onto the
+Pi and starts `compose.rust.yaml`. Select the arch with `TARGET_ARCH` (default
+`arm64`, the Pi):
 
 ```bash
-docker load -i blebridge.tar
+TARGET_ARCH=amd64 mise run build-rust   # build only, e.g. for an x86_64 test host
 ```
 
-### 5. Start the service
+`build-rust` uses nix pkgsCross, not `cross`, because `cross` breaks inside the
+nix devshell. `mise run build-rust-cross` keeps the CI `cross` recipe for a
+clean shell.
 
-Run from the cloned repo directory — `docker compose` uses the local `compose.yaml` and `DOCKER_HOST` routes commands to the Pi:
+**End users** (no repo checkout / mise): copy `compose.example.yaml` to the host
+and run the published ghcr image directly:
 
 ```bash
-mise run deploy
+docker compose -f compose.example.yaml pull && docker compose -f compose.example.yaml up -d
 ```
 
-### 6. Check logs
+### 3. Check logs
 
 ```bash
 mise run logs
+```
+
+### Legacy Python flow
+
+The Python bridge is retired once Rust is validated end-to-end. Until then:
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install arm64   # register QEMU for arm64
+mise run build        # QEMU-emulated arm64 build -> blebridge.tar
+mise run deploy        # docker load + `compose.yaml up -d`
 ```
 
 Expected output when everything works:
