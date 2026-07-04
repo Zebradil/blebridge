@@ -13,7 +13,15 @@ services:
     # not FTMS — do not pin it. The FTMS BLE peripheral (fixtures used ...82:BA)
     # only advertises when the console is in Bluetooth/app mode. Pin it here once
     # confirmed:
-    # environment:
+    environment:
+      # Exclude the counterfeit CSR8510 (0a12:0001): can't advertise or scan, and
+      # probing it crashes the fragile BlueZ 5.55 daemon. Matched by MAC (stable),
+      # not hciN (renumbers on reboot / USB re-plug). Remaining adapters are
+      # auto-selected by probing which can advertise — no role pinning needed.
+      - BLEBRIDGE_SKIP_ADAPTERS=00:1A:7D:DA:71:0B
+    # Optional overrides if you ever need a specific split:
+    #   - BLEBRIDGE_LINK_ADAPTER=hci0
+    #   - BLEBRIDGE_APP_ADAPTER=hci2
     #   - BLEBRIDGE_TREADMILL_MAC=C1:5C:7A:44:82:BA
     volumes:
       - /run/dbus:/run/dbus

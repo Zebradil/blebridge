@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use tracing_subscriber::EnvFilter;
@@ -20,39 +21,83 @@ struct Assignment {
     app: Option<String>,
 }
 
-/// Assign one adapter to the Treadmill Link and (if a second exists) one to the
-/// App Endpoint. Overrides win when set; otherwise adapters are taken in name
-/// order so assignment is deterministic across restarts.
+/// Assign one adapter to the Treadmill Link and (if a suitable second exists) one
+/// to the App Endpoint. Overrides win when set. Otherwise, `advertisers` (the
+/// adapters that actually registered a probe advertisement) drives selection: the
+/// Link is the critical path (central -> ANT to the watch) so it gets first pick
+/// of a working radio; the App Endpoint needs a *different* radio that can
+/// advertise. Adapters that can't advertise (e.g. counterfeit CSR dongles) are
+/// skipped for the App and only used for the Link as a last resort. Name order
+/// keeps the result deterministic across restarts.
 fn assign_adapters(
     mut names: Vec<String>,
     link_override: Option<&str>,
     app_override: Option<&str>,
+    advertisers: &HashSet<String>,
 ) -> Result<Assignment, String> {
     names.sort();
+    if names.is_empty() {
+        return Err("no Bluetooth adapters found".into());
+    }
     let has = |n: &str| names.iter().any(|a| a == n);
 
-    let link = match link_override {
-        Some(n) if has(n) => n.to_string(),
-        Some(n) => {
-            return Err(format!(
-                "BLEBRIDGE_LINK_ADAPTER {n:?} not found in {names:?}"
-            ))
+    if let Some(n) = link_override {
+        if !has(n) {
+            return Err(format!("BLEBRIDGE_LINK_ADAPTER {n:?} not found in {names:?}"));
         }
-        None => names.first().ok_or("no Bluetooth adapters found")?.clone(),
+    }
+    if let Some(n) = app_override {
+        if !has(n) {
+            return Err(format!("BLEBRIDGE_APP_ADAPTER {n:?} not found in {names:?}"));
+        }
+    }
+
+    let app_fixed = app_override.map(str::to_string);
+    let not_app = |n: &str| Some(n) != app_fixed.as_deref();
+
+    // Link: honor the override; else a working radio that isn't the pinned App
+    // adapter, preferring an advertise-capable one, falling back to any adapter.
+    let link = match link_override {
+        Some(n) => n.to_string(),
+        None => names
+            .iter()
+            .find(|n| advertisers.contains(*n) && not_app(n))
+            .or_else(|| names.iter().find(|n| not_app(n)))
+            .or_else(|| names.first())
+            .expect("names is non-empty")
+            .clone(),
     };
 
-    let app = match app_override {
-        Some(n) if has(n) => Some(n.to_string()),
-        Some(n) => {
-            return Err(format!(
-                "BLEBRIDGE_APP_ADAPTER {n:?} not found in {names:?}"
-            ))
-        }
-        // Auto: the App Endpoint takes the first adapter that isn't the Link's.
-        None => names.iter().find(|a| **a != link).cloned(),
+    // App Endpoint: honor the override (unless it collides with the Link); else
+    // the first advertise-capable adapter distinct from the Link. `None` disables
+    // it — Degraded Mode: a single usable radio, or no adapter can advertise.
+    let app = match app_fixed {
+        Some(a) => (a != link).then_some(a),
+        None => names
+            .iter()
+            .find(|n| advertisers.contains(*n) && **n != link)
+            .cloned(),
     };
 
     Ok(Assignment { link, app })
+}
+
+/// Probe whether an adapter can actually register a BLE advertisement. The mgmt
+/// "supported settings" can advertise-claim on controllers that then reject the
+/// HCI command (seen on counterfeit CSR8510 dongles), so the only reliable check
+/// is to try. Registers a throwaway advertisement; dropping the handle (the
+/// returned value is never bound) unregisters it immediately — a sub-second blip.
+async fn can_advertise(adapter: &bluer::Adapter) -> bool {
+    if adapter.set_powered(true).await.is_err() {
+        return false;
+    }
+    let probe = bluer::adv::Advertisement {
+        advertisement_type: bluer::adv::Type::Peripheral,
+        discoverable: Some(true),
+        local_name: Some("blebridge-probe".into()),
+        ..Default::default()
+    };
+    adapter.advertise(probe).await.is_ok()
 }
 
 fn parse_ant_device_number(raw: Option<&str>) -> Result<u16, String> {
@@ -75,6 +120,20 @@ fn parse_treadmill_mac(raw: Option<&str>) -> Result<Option<bluer::Address>, Stri
             .map(Some)
             .map_err(|e| format!("invalid BLEBRIDGE_TREADMILL_MAC {s:?}: {e}")),
     }
+}
+
+/// Adapters to exclude entirely, from a comma/space-separated env value. Each
+/// entry matches an adapter by hci name (`hci1`) or, preferably, by its stable
+/// MAC (`00:1A:7D:DA:71:0B`) — hci indices are assigned by enumeration order and
+/// renumber across reboots / USB port swaps, so a MAC survives them. Compared
+/// uppercased so MAC case doesn't matter. Empty/absent means skip nothing.
+fn parse_skip_list(raw: Option<&str>) -> HashSet<String> {
+    raw.into_iter()
+        .flat_map(|s| s.split([',', ' ']))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_uppercase)
+        .collect()
 }
 
 fn env_opt(name: &str) -> Option<String> {
@@ -133,10 +192,53 @@ async fn run_ble(
     ble_name: String,
 ) -> bluer::Result<()> {
     let session = bluer::Session::new().await?;
+
+    // Auto-accept pairing so a phone bonds without a manual bluetoothctl confirm.
+    // All-None handlers => NoInputNoOutput agent that accepts every request
+    // (JustWorks, no passkey); request_default routes pairing here rather than to
+    // any interactive agent. Handle held until run_ble returns (i.e. a crash).
+    let _agent = session
+        .register_agent(bluer::agent::Agent {
+            request_default: true,
+            ..Default::default()
+        })
+        .await?;
+
+    // Exclude known-hostile controllers *before* touching them. A counterfeit
+    // CSR8510 (0a12:0001) on the Pi can't advertise or scan, and probing its
+    // advertising path spews errors into the fragile BlueZ 5.55 daemon. Skip such
+    // adapters entirely so we never probe or assign them.
+    let skip = parse_skip_list(env_opt("BLEBRIDGE_SKIP_ADAPTERS").as_deref());
+    let mut names = Vec::new();
+    for name in session.adapter_names().await? {
+        let addr = match session.adapter(&name) {
+            Ok(a) => a.address().await.ok(),
+            Err(_) => None,
+        };
+        let skipped = skip.contains(&name.to_uppercase())
+            || addr.as_ref().is_some_and(|a| skip.contains(&a.to_string().to_uppercase()));
+        if skipped {
+            tracing::info!(adapter = name, ?addr, "skipping adapter (BLEBRIDGE_SKIP_ADAPTERS)");
+        } else {
+            names.push(name);
+        }
+    }
+
+    let mut advertisers = HashSet::new();
+    for name in &names {
+        if let Ok(adapter) = session.adapter(name) {
+            if can_advertise(&adapter).await {
+                advertisers.insert(name.clone());
+            }
+        }
+    }
+    tracing::info!(?names, ?advertisers, "probed adapter advertising capability");
+
     let assignment = assign_adapters(
-        session.adapter_names().await?,
+        names,
         env_opt("BLEBRIDGE_LINK_ADAPTER").as_deref(),
         env_opt("BLEBRIDGE_APP_ADAPTER").as_deref(),
+        &advertisers,
     )
     .unwrap_or_else(|e| {
         tracing::error!(e);
@@ -211,10 +313,15 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    fn adv(v: &[&str]) -> HashSet<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn two_adapters_split_between_roles() {
         // Name order is deterministic regardless of enumeration order.
-        let a = assign_adapters(names(&["hci1", "hci0"]), None, None).unwrap();
+        let a = assign_adapters(names(&["hci1", "hci0"]), None, None, &adv(&["hci0", "hci1"]))
+            .unwrap();
         assert_eq!(
             a,
             Assignment {
@@ -226,26 +333,90 @@ mod tests {
 
     #[test]
     fn one_adapter_is_degraded_mode() {
-        let a = assign_adapters(names(&["hci0"]), None, None).unwrap();
+        let a = assign_adapters(names(&["hci0"]), None, None, &adv(&["hci0"])).unwrap();
         assert_eq!(a.link, "hci0");
         assert_eq!(a.app, None);
     }
 
     #[test]
     fn no_adapters_errors() {
-        assert!(assign_adapters(names(&[]), None, None).is_err());
+        assert!(assign_adapters(names(&[]), None, None, &adv(&[])).is_err());
     }
 
     #[test]
     fn overrides_pick_roles() {
-        let a = assign_adapters(names(&["hci0", "hci1"]), Some("hci1"), Some("hci0")).unwrap();
+        let a = assign_adapters(
+            names(&["hci0", "hci1"]),
+            Some("hci1"),
+            Some("hci0"),
+            &adv(&["hci0", "hci1"]),
+        )
+        .unwrap();
         assert_eq!(a.link, "hci1");
         assert_eq!(a.app, Some("hci0".into()));
     }
 
     #[test]
     fn unknown_override_errors() {
-        assert!(assign_adapters(names(&["hci0"]), Some("hci9"), None).is_err());
-        assert!(assign_adapters(names(&["hci0"]), None, Some("hci9")).is_err());
+        assert!(assign_adapters(names(&["hci0"]), Some("hci9"), None, &adv(&["hci0"])).is_err());
+        assert!(assign_adapters(names(&["hci0"]), None, Some("hci9"), &adv(&["hci0"])).is_err());
+    }
+
+    #[test]
+    fn skip_list_parses_uppercases_and_ignores_blanks() {
+        assert!(parse_skip_list(None).is_empty());
+        assert!(parse_skip_list(Some("")).is_empty());
+        // Uppercased so a MAC matches regardless of case; names uppercase too.
+        assert_eq!(parse_skip_list(Some("hci1")), adv(&["HCI1"]));
+        assert_eq!(
+            parse_skip_list(Some("00:1a:7d:da:71:0b")),
+            adv(&["00:1A:7D:DA:71:0B"])
+        );
+        assert_eq!(parse_skip_list(Some(" hci1 , hci3 ")), adv(&["HCI1", "HCI3"]));
+    }
+
+    #[test]
+    fn app_skips_adapter_that_cannot_advertise() {
+        // hci1 can't advertise (dead CSR dongle) — App must land on hci2, not hci1.
+        let a = assign_adapters(
+            names(&["hci0", "hci1", "hci2"]),
+            None,
+            None,
+            &adv(&["hci0", "hci2"]),
+        )
+        .unwrap();
+        assert_eq!(a.link, "hci0");
+        assert_eq!(a.app, Some("hci2".into()));
+    }
+
+    #[test]
+    fn single_advertising_adapter_prioritizes_link() {
+        // Only hci0 can advertise; the Link (critical ANT path) gets it, App off.
+        let a = assign_adapters(names(&["hci0", "hci1"]), None, None, &adv(&["hci0"])).unwrap();
+        assert_eq!(a.link, "hci0");
+        assert_eq!(a.app, None);
+    }
+
+    #[test]
+    fn no_advertising_adapter_still_links() {
+        // Nothing can advertise: App off, but the Link still runs on a best-effort
+        // adapter so ANT bridging is attempted rather than the process bailing.
+        let a = assign_adapters(names(&["hci1"]), None, None, &adv(&[])).unwrap();
+        assert_eq!(a.link, "hci1");
+        assert_eq!(a.app, None);
+    }
+
+    #[test]
+    fn app_override_kept_when_auto_link_would_collide() {
+        // App pinned to hci0; auto Link must avoid it and take another advertiser.
+        let a = assign_adapters(
+            names(&["hci0", "hci1", "hci2"]),
+            None,
+            Some("hci0"),
+            &adv(&["hci0", "hci2"]),
+        )
+        .unwrap();
+        assert_eq!(a.link, "hci2");
+        assert_eq!(a.app, Some("hci0".into()));
     }
 }
