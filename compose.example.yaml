@@ -8,10 +8,16 @@ services:
     container_name: blebridge
     restart: unless-stopped
     network_mode: host
-    # If your treadmill isn't auto-discovered (e.g. FitShow "FS-" modules that
-    # advertise no FTMS UUID until after connect), pin its MAC:
+    # Optional configuration (all have sensible defaults):
     # environment:
+    #   # Pin the treadmill MAC if it isn't auto-discovered (e.g. FitShow "FS-"
+    #   # modules that advertise no FTMS UUID until after connect):
     #   - BLEBRIDGE_TREADMILL_MAC=AA:BB:CC:DD:EE:FF
+    #   # Name the App Endpoint advertises to mobile apps (default BLE_Bridge_Treadmill):
+    #   - BLEBRIDGE_BLE_NAME=My Treadmill
+    #   # Force adapter roles (default: auto; one adapter -> Degraded Mode, App Endpoint off):
+    #   - BLEBRIDGE_LINK_ADAPTER=hci0
+    #   - BLEBRIDGE_APP_ADAPTER=hci1
     volumes:
       - /run/dbus:/run/dbus
     devices:

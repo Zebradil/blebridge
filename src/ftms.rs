@@ -2,6 +2,24 @@
 //! is passthrough — only the ANT Broadcaster parses, and only the one field it
 //! needs: instantaneous speed.
 
+use bluer::Uuid;
+
+// FTMS service and its characteristics, as 128-bit forms of the SIG 16-bit UUIDs.
+pub const FTMS_SERVICE: Uuid = Uuid::from_u128(0x00001826_0000_1000_8000_00805f9b34fb);
+pub const FITNESS_MACHINE_FEATURE: Uuid = Uuid::from_u128(0x00002acc_0000_1000_8000_00805f9b34fb);
+pub const TREADMILL_MEASUREMENT: Uuid = Uuid::from_u128(0x00002acd_0000_1000_8000_00805f9b34fb);
+pub const TRAINING_STATUS: Uuid = Uuid::from_u128(0x00002ad3_0000_1000_8000_00805f9b34fb);
+pub const SUPPORTED_SPEED_RANGE: Uuid = Uuid::from_u128(0x00002ad4_0000_1000_8000_00805f9b34fb);
+pub const SUPPORTED_INCLINATION_RANGE: Uuid =
+    Uuid::from_u128(0x00002ad5_0000_1000_8000_00805f9b34fb);
+pub const FITNESS_MACHINE_STATUS: Uuid = Uuid::from_u128(0x00002ada_0000_1000_8000_00805f9b34fb);
+
+// Hardcoded fallbacks served by the App Endpoint when the treadmill lacks the
+// matching read characteristic (values ported from the Python peripheral).
+pub const FALLBACK_FEATURE: [u8; 8] = [0x0D, 0x16, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00];
+pub const FALLBACK_SPEED_RANGE: [u8; 6] = [0x64, 0x00, 0x40, 0x06, 0x0A, 0x00]; // 1.00–16.00 km/h, 0.10 step
+pub const FALLBACK_INCLINATION_RANGE: [u8; 6] = [0x00, 0x00, 0x64, 0x00, 0x05, 0x00]; // 0–10.0%, 0.05 step
+
 /// Instantaneous speed in m/s from a raw 2ACD notification payload, or `None`
 /// when the frame carries no speed field.
 ///
