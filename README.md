@@ -114,6 +114,41 @@ docker compose -f compose.example.yaml pull && docker compose -f compose.example
 mise run logs
 ```
 
+## App Endpoint validation
+
+After deploying the Rust bridge, a Linux laptop with Bluetooth can validate the
+same BLE behavior you would inspect with nRF Connect:
+
+```bash
+nix run .#test-bt
+```
+
+The test scans for `BLE_Bridge_Treadmill`, connects to it as a mobile app would,
+reads the proxied FTMS range characteristics (`2AD4`, `2AD5`), subscribes to the
+FTMS notification characteristics (`2ACD`, `2ADA`, `2AD3`), prints raw payloads
+as hex, and fails if no `2ACD` treadmill measurement notifications arrive during
+the capture window.
+
+Use it in two passes:
+
+1. With the treadmill off, run `nix run .#test-bt -- --capture-seconds 5 --allow-no-frames`
+   and confirm the bridge advertises and connects while idle. No live `2ACD`
+   frames are expected.
+2. With the treadmill on and walking, run `nix run .#test-bt`; it should print
+   repeated `2ACD` hex frames and exit successfully.
+
+Options:
+
+```bash
+nix run .#test-bt -- --name My_Bridge_Name       # if BLEBRIDGE_BLE_NAME is set
+nix run .#test-bt -- --address AA:BB:CC:DD:EE:FF # skip scan and connect directly
+nix run .#test-bt -- --capture-seconds 60        # longer live capture
+nix run .#test-bt -- --allow-no-frames           # idle-mode check
+```
+
+The script matches by advertised name rather than any FTMS device so it does not
+accidentally connect to the physical treadmill when both are visible.
+
 ### Legacy Python flow
 
 The Python bridge is retired once Rust is validated end-to-end. Until then:
