@@ -50,9 +50,13 @@ pub async fn run(core: Arc<Mutex<SdmCore>>, pin: Option<Address>) -> bluer::Resu
 /// Continuous scan until a Treadmill appears. No backoff — the discovery stream
 /// stays open and yields the device as soon as BlueZ sees it.
 async fn discover(adapter: &Adapter, pin: Option<Address>) -> bluer::Result<Device> {
-    let mut events = std::pin::pin!(adapter.discover_devices().await?);
-    // discover_devices replays already-known devices as DeviceAdded, so a
-    // treadmill still cached from a prior session is picked up immediately.
+    // _with_changes, not plain discover_devices: BlueZ fills device properties
+    // (incl. the advertised FTMS UUID) asynchronously and often AFTER the first
+    // DeviceAdded, so a plain stream checks is_treadmill once against empty UUIDs
+    // and never again. The _with_changes variant re-emits DeviceAdded whenever
+    // properties change, so the late-arriving UUID triggers a fresh check.
+    // Already-known devices are replayed too, so a cached treadmill is immediate.
+    let mut events = std::pin::pin!(adapter.discover_devices_with_changes().await?);
     while let Some(event) = events.next().await {
         let AdapterEvent::DeviceAdded(addr) = event else {
             continue;
@@ -77,10 +81,8 @@ async fn is_treadmill(device: &Device, pin: Option<Address>) -> bluer::Result<bo
         return Ok(device.address() == mac);
     }
     // Unpinned: first FTMS advertiser wins, except our own App Endpoint.
-    // ponytail: relies on the FTMS 0x1826 UUID being in the advertisement at
-    // DeviceAdded time (standard for FTMS treadmills). If a device turns out to
-    // report UUIDs only after a PropertyChanged, pin its MAC via
-    // BLEBRIDGE_TREADMILL_MAC instead of teaching discover() to re-check.
+    // Late-arriving UUIDs are handled by discover_devices_with_changes (see
+    // discover()), which re-checks on each PropertyChanged.
     let advertises_ftms = device
         .uuids()
         .await?

@@ -9,8 +9,14 @@ services:
     container_name: blebridge
     restart: unless-stopped
     network_mode: host
+    # NOTE: C1:5C:7A:44:82:B9 is the treadmill's Bluetooth AUDIO module (A2DP),
+    # not FTMS — do not pin it. The FTMS BLE peripheral (fixtures used ...82:BA)
+    # only advertises when the console is in Bluetooth/app mode. Pin it here once
+    # confirmed:
+    # environment:
+    #   - BLEBRIDGE_TREADMILL_MAC=C1:5C:7A:44:82:BA
     volumes:
-      - /var/run/dbus:/var/run/dbus
+      - /run/dbus:/run/dbus
     devices:
       - /dev/bus/usb:/dev/bus/usb
     cap_add:

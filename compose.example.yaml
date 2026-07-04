@@ -8,8 +8,12 @@ services:
     container_name: blebridge
     restart: unless-stopped
     network_mode: host
+    # If your treadmill isn't auto-discovered (e.g. FitShow "FS-" modules that
+    # advertise no FTMS UUID until after connect), pin its MAC:
+    # environment:
+    #   - BLEBRIDGE_TREADMILL_MAC=AA:BB:CC:DD:EE:FF
     volumes:
-      - /var/run/dbus:/var/run/dbus
+      - /run/dbus:/run/dbus
     devices:
       - /dev/bus/usb:/dev/bus/usb
     cap_add:
