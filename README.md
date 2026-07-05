@@ -30,6 +30,28 @@ The Raspberry Pi 3B has one onboard Bluetooth adapter (hci0, BT 5.0). A second U
 - Docker and Docker Compose
 - BlueZ running (`systemctl status bluetooth`)
 - Two Bluetooth adapters and one ANT+ USB stick connected
+- Recommended BlueZ host config (`/etc/bluetooth/main.conf`, then
+  `systemctl restart bluetooth`):
+
+  ```ini
+  [General]
+  # LE-only: dual-mode adapters otherwise trigger a second (BR/EDR) pairing
+  # prompt on phones; everything the bridge does is LE.
+  ControllerMode = le
+  # Let a phone that "forgot" the bridge re-pair without manually wiping the
+  # stale bond on the Pi (default "never" makes re-pairing loop forever).
+  JustWorksRepairing = always
+  ```
+
+- Recommended: auto-restart bluetoothd on crash (BlueZ 5.55 can SEGV on
+  disconnects; systemd does not restart it by default):
+
+  ```sh
+  sudo mkdir -p /etc/systemd/system/bluetooth.service.d
+  printf "[Service]\nRestart=on-failure\nRestartSec=2\n" |
+    sudo tee /etc/systemd/system/bluetooth.service.d/restart.conf
+  sudo systemctl daemon-reload
+  ```
 
 **On the build machine (Rust, recommended):**
 
