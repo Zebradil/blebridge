@@ -10,19 +10,21 @@
 //! It keeps advertising while Idle so a future UI can reach the bridge exactly
 //! when nothing is connected (ADR-0002); FTMS signals "no data" in-band.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bluer::{
     adv::Advertisement,
     gatt::local::{
         Application, Characteristic, CharacteristicNotify, CharacteristicNotifyMethod,
-        CharacteristicRead, Service,
+        CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod, Service,
     },
     Adapter,
 };
 use futures_util::FutureExt;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
+use crate::command::{self, Routed};
 use crate::ftms;
 
 /// Which forwarded notify characteristic a frame belongs to. The Treadmill Link
@@ -32,6 +34,7 @@ pub enum FwdChar {
     Measurement,    // 2ACD
     Status,         // 2ADA
     TrainingStatus, // 2AD3
+    ControlPoint,   // 2AD9 — treadmill's response indication, or a synthesized one
 }
 
 /// One treadmill notification, forwarded byte-for-byte.
@@ -66,6 +69,14 @@ impl Default for ProxiedReads {
 pub struct AppBridge {
     pub frames: broadcast::Sender<ForwardFrame>,
     pub reads: Arc<Mutex<ProxiedReads>>,
+    /// The Link flips this on connect/disconnect; the App Endpoint's Control
+    /// Point write reads it to decide forward-or-reject (see [`command::route`]).
+    pub connected: Arc<AtomicBool>,
+    /// Control Commands from apps, forwarded to the treadmill by the Link. Only
+    /// commands the router chose to forward (treadmill connected) land here.
+    /// `Mutex` because the single-consumer receiver isn't `Clone`; only the Link
+    /// ever locks it.
+    pub commands: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
 }
 
 /// Serve the GATT application and advertise forever. Returns only on an
@@ -75,6 +86,8 @@ pub async fn run(
     ble_name: String,
     frames: broadcast::Sender<ForwardFrame>,
     reads: Arc<Mutex<ProxiedReads>>,
+    commands: mpsc::Sender<Vec<u8>>,
+    connected: Arc<AtomicBool>,
 ) -> bluer::Result<()> {
     adapter.set_powered(true).await?;
 
@@ -125,6 +138,7 @@ pub async fn run(
                 notify_char(ftms::TREADMILL_MEASUREMENT, FwdChar::Measurement, &frames),
                 notify_char(ftms::FITNESS_MACHINE_STATUS, FwdChar::Status, &frames),
                 notify_char(ftms::TRAINING_STATUS, FwdChar::TrainingStatus, &frames),
+                control_point_char(&frames, commands, connected),
             ],
             ..Default::default()
         }],
@@ -189,33 +203,117 @@ fn notify_char(
     tag: FwdChar,
     frames: &broadcast::Sender<ForwardFrame>,
 ) -> Characteristic {
-    let frames = frames.clone();
     Characteristic {
         uuid,
-        notify: Some(CharacteristicNotify {
-            notify: true,
-            method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
-                let mut rx = frames.subscribe();
-                async move {
-                    tokio::spawn(async move {
-                        loop {
-                            match rx.recv().await {
-                                Ok(f) if f.char == tag => {
-                                    if notifier.notify(f.bytes).await.is_err() {
-                                        break; // app unsubscribed / disconnected
-                                    }
+        notify: Some(fwd_notify(tag, frames, false)),
+        ..Default::default()
+    }
+}
+
+/// A subscription that pumps every frame tagged `tag` to one subscribed app.
+/// `indicate` picks the FTMS transport: notifications (unacknowledged) for the
+/// measurement/status streams, indications (acknowledged) for the Control Point,
+/// which the FTMS spec requires to be an Indicate characteristic.
+fn fwd_notify(
+    tag: FwdChar,
+    frames: &broadcast::Sender<ForwardFrame>,
+    indicate: bool,
+) -> CharacteristicNotify {
+    let frames = frames.clone();
+    CharacteristicNotify {
+        notify: !indicate,
+        indicate,
+        method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
+            let mut rx = frames.subscribe();
+            async move {
+                tracing::info!(?tag, indicate, "app subscribed to forwarded frames");
+                tokio::spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Ok(f) if f.char == tag => {
+                                if let Err(e) = notifier.notify(f.bytes).await {
+                                    tracing::info!(?tag, error = %e, "notify failed; app unsubscribed / disconnected");
+                                    break;
                                 }
-                                Ok(_) => {} // frame for a different characteristic
-                                Err(broadcast::error::RecvError::Lagged(_)) => {} // skip stale
-                                Err(broadcast::error::RecvError::Closed) => break,
+                            }
+                            Ok(_) => {} // frame for a different characteristic
+                            Err(broadcast::error::RecvError::Lagged(_)) => {} // skip stale
+                            Err(broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                });
+            }
+            .boxed()
+        })),
+        ..Default::default()
+    }
+}
+
+/// FTMS Control Point (2AD9): the write path from a Mobile App to the treadmill.
+/// Write is verbatim-forwarded to the treadmill's Control Point (via the Link's
+/// `commands` channel) when connected, or answered with a synthesized FTMS
+/// Response Code indication when not (see [`command::route`]). The treadmill's
+/// own response indications arrive as `FwdChar::ControlPoint` frames and are
+/// delivered back over the same indicate subscription.
+fn control_point_char(
+    frames: &broadcast::Sender<ForwardFrame>,
+    commands: mpsc::Sender<Vec<u8>>,
+    connected: Arc<AtomicBool>,
+) -> Characteristic {
+    let write_frames = frames.clone();
+    Characteristic {
+        uuid: ftms::FITNESS_MACHINE_CONTROL_POINT,
+        write: Some(CharacteristicWrite {
+            write: true,
+            write_without_response: true,
+            method: CharacteristicWriteMethod::Fun(Box::new(move |value, _req| {
+                let frames = write_frames.clone();
+                let commands = commands.clone();
+                let connected = connected.clone();
+                async move {
+                    let connected_now = connected.load(Ordering::Relaxed);
+                    tracing::info!(
+                        value = format!("{value:02x?}"),
+                        connected = connected_now,
+                        "App Endpoint 2AD9 write received"
+                    );
+                    match command::route(&value, connected_now) {
+                        Routed::Forward(bytes) => {
+                            tracing::info!(
+                                bytes = format!("{bytes:02x?}"),
+                                "2AD9 routing Forward -> Link"
+                            );
+                            // Link gone (crash-only shutdown) is the only send
+                            // failure; log and still ack the ATT write.
+                            if let Err(e) = commands.send(bytes).await {
+                                tracing::warn!("Control Command dropped, channel closed: {e}");
                             }
                         }
-                    });
+                        Routed::Reject(resp) => {
+                            tracing::info!(
+                                resp = format!("{resp:02x?}"),
+                                "2AD9 routing Reject -> synth indication"
+                            );
+                            // Answer immediately over the app's CP indication so
+                            // its write reports failure instead of timing out.
+                            let _ = frames.send(ForwardFrame {
+                                char: FwdChar::ControlPoint,
+                                bytes: resp,
+                            });
+                        }
+                    }
+                    Ok(())
                 }
                 .boxed()
             })),
             ..Default::default()
         }),
+        // ponytail: FTMS wants indicate here, but BlueZ 5.55's GATT server cannot
+        // deliver indications at all — the app-emitted Value never becomes an ATT
+        // indication and the notify session dies with "device has stopped the
+        // notification session" (verified via dbus-monitor + btmon). Notify-only
+        // is off-spec but deliverable; revert to indicate once BlueZ >= 5.56.
+        notify: Some(fwd_notify(FwdChar::ControlPoint, frames, false)),
         ..Default::default()
     }
 }

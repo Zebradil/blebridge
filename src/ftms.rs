@@ -12,6 +12,8 @@ pub const TRAINING_STATUS: Uuid = Uuid::from_u128(0x00002ad3_0000_1000_8000_0080
 pub const SUPPORTED_SPEED_RANGE: Uuid = Uuid::from_u128(0x00002ad4_0000_1000_8000_00805f9b34fb);
 pub const SUPPORTED_INCLINATION_RANGE: Uuid =
     Uuid::from_u128(0x00002ad5_0000_1000_8000_00805f9b34fb);
+pub const FITNESS_MACHINE_CONTROL_POINT: Uuid =
+    Uuid::from_u128(0x00002ad9_0000_1000_8000_00805f9b34fb);
 pub const FITNESS_MACHINE_STATUS: Uuid = Uuid::from_u128(0x00002ada_0000_1000_8000_00805f9b34fb);
 
 // Hardcoded fallbacks served by the App Endpoint when the treadmill lacks the
