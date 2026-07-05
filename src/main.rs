@@ -43,12 +43,16 @@ fn assign_adapters(
 
     if let Some(n) = link_override {
         if !has(n) {
-            return Err(format!("BLEBRIDGE_LINK_ADAPTER {n:?} not found in {names:?}"));
+            return Err(format!(
+                "BLEBRIDGE_LINK_ADAPTER {n:?} not found in {names:?}"
+            ));
         }
     }
     if let Some(n) = app_override {
         if !has(n) {
-            return Err(format!("BLEBRIDGE_APP_ADAPTER {n:?} not found in {names:?}"));
+            return Err(format!(
+                "BLEBRIDGE_APP_ADAPTER {n:?} not found in {names:?}"
+            ));
         }
     }
 
@@ -216,9 +220,15 @@ async fn run_ble(
             Err(_) => None,
         };
         let skipped = skip.contains(&name.to_uppercase())
-            || addr.as_ref().is_some_and(|a| skip.contains(&a.to_string().to_uppercase()));
+            || addr
+                .as_ref()
+                .is_some_and(|a| skip.contains(&a.to_string().to_uppercase()));
         if skipped {
-            tracing::info!(adapter = name, ?addr, "skipping adapter (BLEBRIDGE_SKIP_ADAPTERS)");
+            tracing::info!(
+                adapter = name,
+                ?addr,
+                "skipping adapter (BLEBRIDGE_SKIP_ADAPTERS)"
+            );
         } else {
             names.push(name);
         }
@@ -232,7 +242,11 @@ async fn run_ble(
             }
         }
     }
-    tracing::info!(?names, ?advertisers, "probed adapter advertising capability");
+    tracing::info!(
+        ?names,
+        ?advertisers,
+        "probed adapter advertising capability"
+    );
 
     let assignment = assign_adapters(
         names,
@@ -320,8 +334,13 @@ mod tests {
     #[test]
     fn two_adapters_split_between_roles() {
         // Name order is deterministic regardless of enumeration order.
-        let a = assign_adapters(names(&["hci1", "hci0"]), None, None, &adv(&["hci0", "hci1"]))
-            .unwrap();
+        let a = assign_adapters(
+            names(&["hci1", "hci0"]),
+            None,
+            None,
+            &adv(&["hci0", "hci1"]),
+        )
+        .unwrap();
         assert_eq!(
             a,
             Assignment {
@@ -372,7 +391,10 @@ mod tests {
             parse_skip_list(Some("00:1a:7d:da:71:0b")),
             adv(&["00:1A:7D:DA:71:0B"])
         );
-        assert_eq!(parse_skip_list(Some(" hci1 , hci3 ")), adv(&["HCI1", "HCI3"]));
+        assert_eq!(
+            parse_skip_list(Some(" hci1 , hci3 ")),
+            adv(&["HCI1", "HCI3"])
+        );
     }
 
     #[test]

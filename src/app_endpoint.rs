@@ -152,7 +152,9 @@ pub async fn run(
         if adapter.active_advertising_instances().await? == 0 {
             return Err(bluer::Error {
                 kind: bluer::ErrorKind::Failed,
-                message: "advertisement vanished (bluetoothd restarted?); exiting for re-registration".into(),
+                message:
+                    "advertisement vanished (bluetoothd restarted?); exiting for re-registration"
+                        .into(),
             });
         }
     }
