@@ -1,10 +1,12 @@
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use tracing_subscriber::EnvFilter;
 
 mod ant;
 mod app_endpoint;
+mod command;
 mod ftms;
 mod link;
 mod sdm;
@@ -277,14 +279,20 @@ async fn run_ble(
 
     let app_adapter = session.adapter(&app_name)?;
     let (frames, _) = tokio::sync::broadcast::channel(64);
+    // Control Command write path: App Endpoint -> Link -> treadmill. The flag
+    // lets the App Endpoint reject writes while no treadmill is connected.
+    let connected = Arc::new(AtomicBool::new(false));
+    let (commands_tx, commands_rx) = tokio::sync::mpsc::channel(16);
     let bridge = app_endpoint::AppBridge {
         frames: frames.clone(),
         reads: reads.clone(),
+        connected: connected.clone(),
+        commands: Arc::new(tokio::sync::Mutex::new(commands_rx)),
     };
 
     // Both loop forever; select! returns whichever hits a crash-only error first.
     tokio::select! {
-        r = app_endpoint::run(app_adapter, ble_name.clone(), frames, reads) => r,
+        r = app_endpoint::run(app_adapter, ble_name.clone(), frames, reads, commands_tx, connected) => r,
         r = link::run(link_adapter, core, treadmill_mac, Some(bridge), ble_name) => r,
     }
 }

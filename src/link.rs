@@ -11,12 +11,14 @@
 //! unexpected BlueZ/D-Bus error propagates out so the process exits nonzero and
 //! Docker restarts it.
 
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use bluer::{Adapter, AdapterEvent, Address, Device, Uuid};
 use futures_util::{stream::select_all, StreamExt};
 
 use crate::app_endpoint::{AppBridge, ForwardFrame, FwdChar, ProxiedReads};
+use crate::command;
 use crate::ftms;
 use crate::sdm::{Event, SdmCore};
 
@@ -44,6 +46,10 @@ pub async fn run(
             tracing::warn!(addr = %device.address(), "treadmill session ended: {e}");
         }
         core.lock().unwrap().handle(Event::TreadmillDisconnected);
+        // Back to Idle: reject Control Commands again until a treadmill reconnects.
+        if let Some(bridge) = &bridge {
+            bridge.connected.store(false, Ordering::Relaxed);
+        }
         tracing::info!("back to Idle; rediscovering");
     }
 }
@@ -132,38 +138,97 @@ async fn serve(
         })?;
     streams.push(tag(measurement.notify().await?, FwdChar::Measurement));
 
+    // Control Point write handle for forwarding app commands to the treadmill.
+    let mut control_point = None;
     if bridge.is_some() {
         for (uuid, tag_kind) in [
             (ftms::FITNESS_MACHINE_STATUS, FwdChar::Status),
             (ftms::TRAINING_STATUS, FwdChar::TrainingStatus),
+            (ftms::FITNESS_MACHINE_CONTROL_POINT, FwdChar::ControlPoint),
         ] {
             if let Some(ch) = find_char(device, uuid).await? {
+                // The treadmill's Control Point indications (responses to our
+                // forwarded writes) flow back to the app like any other frame.
                 streams.push(tag(ch.notify().await?, tag_kind));
+                if tag_kind == FwdChar::ControlPoint {
+                    control_point = Some(ch);
+                }
             } else {
                 tracing::info!(?uuid, "treadmill lacks characteristic; not forwarded");
             }
         }
     }
 
+    // Lock the command receiver for the whole session; only the Link consumes
+    // it, and no command is ever enqueued while disconnected (the router rejects
+    // those at the App Endpoint), so nothing queues up between sessions.
+    let mut commands = match bridge {
+        Some(b) => Some(b.commands.lock().await),
+        None => None,
+    };
+
     let mut frames = std::pin::pin!(select_all(streams));
     core.lock().unwrap().handle(Event::TreadmillConnected);
+    if let Some(bridge) = bridge {
+        bridge.connected.store(true, Ordering::Relaxed);
+    }
     tracing::info!(addr = %device.address(), forwarding = bridge.is_some(), "treadmill connected");
 
-    while let Some((tag_kind, bytes)) = frames.next().await {
-        if tag_kind == FwdChar::Measurement {
-            if let Some(mps) = ftms::instantaneous_speed_mps(&bytes) {
-                core.lock().unwrap().handle(Event::SpeedUpdated(mps));
+    loop {
+        tokio::select! {
+            // A frame from the treadmill: drive ANT and forward to apps.
+            frame = frames.next() => {
+                let Some((tag_kind, bytes)) = frame else {
+                    break; // all notify streams ended: treadmill disconnected
+                };
+                if tag_kind == FwdChar::Measurement {
+                    if let Some(mps) = ftms::instantaneous_speed_mps(&bytes) {
+                        core.lock().unwrap().handle(Event::SpeedUpdated(mps));
+                    }
+                }
+                if let Some(bridge) = bridge {
+                    // Ignore send errors: no subscriber yet is normal, not fatal.
+                    let _ = bridge.frames.send(ForwardFrame { char: tag_kind, bytes });
+                }
             }
-        }
-        if let Some(bridge) = bridge {
-            // Ignore send errors: no subscriber yet is normal, not fatal.
-            let _ = bridge.frames.send(ForwardFrame {
-                char: tag_kind,
-                bytes,
-            });
+            // A Control Command from an app: forward verbatim to the treadmill.
+            cmd = recv_command(commands.as_mut()) => {
+                let Some(bytes) = cmd else { continue };
+                match &control_point {
+                    Some(cp) => {
+                        if let Err(e) = cp.write(&bytes).await {
+                            tracing::warn!("Control Point write to treadmill failed: {e}");
+                        }
+                    }
+                    // Connected but the treadmill has no Control Point (rare).
+                    // Reject back to the app rather than dropping silently, so
+                    // its write reports failure instead of timing out.
+                    None => {
+                        tracing::warn!("treadmill exposes no Control Point; rejecting command");
+                        if let Some(bridge) = bridge {
+                            let op = bytes.first().copied().unwrap_or(0);
+                            let _ = bridge.frames.send(ForwardFrame {
+                                char: FwdChar::ControlPoint,
+                                bytes: command::reject(op),
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Await the next forwarded Control Command, or never resolve when there is no
+/// command channel (Degraded Mode), so it can sit inertly in a `select!`.
+async fn recv_command(
+    commands: Option<&mut tokio::sync::MutexGuard<'_, tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+) -> Option<Vec<u8>> {
+    match commands {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Read the treadmill's Fitness Machine Feature and supported range
