@@ -96,7 +96,7 @@ fn session(core: &Arc<Mutex<SdmCore>>, device_number: u16, start: Instant) -> Se
     // open" logged, zero RF output). A USB port reset before each session
     // recovers it. If the reset renumbers the device, opening below fails and
     // the retry loop re-finds the stick.
-    if let Ok(mut handle) = device.open() {
+    if let Ok(handle) = device.open() {
         let _ = handle.reset();
     }
     let mut driver = match UsbDriver::new(device) {
