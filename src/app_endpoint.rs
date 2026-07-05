@@ -78,6 +78,13 @@ pub async fn run(
 ) -> bluer::Result<()> {
     adapter.set_powered(true).await?;
 
+    // FTMS needs no encryption — a real treadmill never pairs. Bonds are pure
+    // liability here: a stored LTK makes BlueZ send an SMP Security Request on
+    // every reconnect, which surfaces as a bogus "pairing request" notification
+    // on the phone (and a phone that deleted its keys then loops on re-pair).
+    // Refuse pairing so no bond can ever be stored.
+    adapter.set_pairable(false).await?;
+
     // Centrals connected before this process started keep their LE link (it
     // lives in the kernel/bluetoothd, not in us) and their CCC subscriptions
     // point at the *previous* GATT application. BlueZ 5.55 never re-issues
