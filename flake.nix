@@ -92,6 +92,28 @@
           blebridge-amd64 = mkBridge pkgs.pkgsCross.musl64;
         };
 
+      apps = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          test-bt = pkgs.writeShellApplication {
+            name = "test-bt";
+            runtimeInputs = [
+              (pkgs.python3.withPackages (ps: [ ps.bleak ]))
+            ];
+            text = ''
+              exec python3 ${./tools/test_bt.py} "$@"
+            '';
+          };
+        in
+        {
+          test-bt = {
+            type = "app";
+            program = "${test-bt}/bin/test-bt";
+          };
+        }
+      );
+
       devShells = forAllSystems (
         system:
         let

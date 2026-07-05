@@ -30,6 +30,35 @@ The Raspberry Pi 3B has one onboard Bluetooth adapter (hci0, BT 5.0). A second U
 - Docker and Docker Compose
 - BlueZ running (`systemctl status bluetooth`)
 - Two Bluetooth adapters and one ANT+ USB stick connected
+- Recommended BlueZ host config (`/etc/bluetooth/main.conf`, then
+  `systemctl restart bluetooth`):
+
+  ```ini
+  [General]
+  # LE-only: dual-mode adapters otherwise trigger a second (BR/EDR) pairing
+  # prompt on phones; everything the bridge does is LE.
+  ControllerMode = le
+  # Let a phone that "forgot" the bridge re-pair without manually wiping the
+  # stale bond on the Pi (default "never" makes re-pairing loop forever).
+  JustWorksRepairing = always
+
+  [GATT]
+  # Disable EATT. bluetoothd otherwise opens an Enhanced ATT channel (PSM
+  # 0x27) to every connected phone; EATT requires encryption, so the kernel
+  # follows up with an SMP Security Request and the phone shows a pairing
+  # prompt. FTMS needs no pairing at all (a real treadmill never prompts).
+  Channels = 1
+  ```
+
+- Recommended: auto-restart bluetoothd on crash (BlueZ 5.55 can SEGV on
+  disconnects; systemd does not restart it by default):
+
+  ```sh
+  sudo mkdir -p /etc/systemd/system/bluetooth.service.d
+  printf "[Service]\nRestart=on-failure\nRestartSec=2\n" |
+    sudo tee /etc/systemd/system/bluetooth.service.d/restart.conf
+  sudo systemctl daemon-reload
+  ```
 
 **On the build machine (Rust, recommended):**
 
@@ -113,6 +142,41 @@ docker compose -f compose.example.yaml pull && docker compose -f compose.example
 ```bash
 mise run logs
 ```
+
+## App Endpoint validation
+
+After deploying the Rust bridge, a Linux laptop with Bluetooth can validate the
+same BLE behavior you would inspect with nRF Connect:
+
+```bash
+nix run .#test-bt
+```
+
+The test scans for `BLE_Bridge_Treadmill`, connects to it as a mobile app would,
+reads the proxied FTMS range characteristics (`2AD4`, `2AD5`), subscribes to the
+FTMS notification characteristics (`2ACD`, `2ADA`, `2AD3`), prints raw payloads
+as hex, and fails if no `2ACD` treadmill measurement notifications arrive during
+the capture window.
+
+Use it in two passes:
+
+1. With the treadmill off, run `nix run .#test-bt -- --capture-seconds 5 --allow-no-frames`
+   and confirm the bridge advertises and connects while idle. No live `2ACD`
+   frames are expected.
+2. With the treadmill on and walking, run `nix run .#test-bt`; it should print
+   repeated `2ACD` hex frames and exit successfully.
+
+Options:
+
+```bash
+nix run .#test-bt -- --name My_Bridge_Name       # if BLEBRIDGE_BLE_NAME is set
+nix run .#test-bt -- --address AA:BB:CC:DD:EE:FF # skip scan and connect directly
+nix run .#test-bt -- --capture-seconds 60        # longer live capture
+nix run .#test-bt -- --allow-no-frames           # idle-mode check
+```
+
+The script matches by advertised name rather than any FTMS device so it does not
+accidentally connect to the physical treadmill when both are visible.
 
 ### Legacy Python flow
 

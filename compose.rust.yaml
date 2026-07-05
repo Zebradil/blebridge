@@ -13,7 +13,26 @@ services:
     # not FTMS — do not pin it. The FTMS BLE peripheral (fixtures used ...82:BA)
     # only advertises when the console is in Bluetooth/app mode. Pin it here once
     # confirmed:
-    # environment:
+    environment:
+      # Exclude the counterfeit CSR8510 (0a12:0001): can't advertise or scan, and
+      # probing it crashes the fragile BlueZ 5.55 daemon. Matched by MAC (stable),
+      # not hciN (renumbers on reboot / USB re-plug). Remaining adapters are
+      # auto-selected by probing which can advertise — no role pinning needed.
+      - BLEBRIDGE_SKIP_ADAPTERS=00:1A:7D:DA:71:0B
+      # Role pin, NOT optional: the ASUS BT500's RTL8761BU firmware (fw
+      # 0x09a98a6b) never sends LE Enhanced Connection Complete for connections
+      # to its own extended advertisement — the kernel drops all ACL from the
+      # phone ("ACL packet for unknown connection handle") and GATT is dead air.
+      # So the peripheral (App Endpoint) must live on the onboard Broadcom
+      # (legacy advertising); the Realtek is central-only. Only the App side is
+      # pinned: hci0 is the UART onboard chip (never renumbers), and the Link
+      # then auto-picks the remaining radio whatever hciN the USB dongle gets
+      # after a replug. Verified end-to-end with tools/fake_treadmill.py +
+      # tools/test_bt.py on 2026-07-05.
+      - BLEBRIDGE_APP_ADAPTER=hci0
+    # Optional overrides if you ever need a specific split:
+    #   - BLEBRIDGE_LINK_ADAPTER=hci0
+    #   - BLEBRIDGE_APP_ADAPTER=hci2
     #   - BLEBRIDGE_TREADMILL_MAC=C1:5C:7A:44:82:BA
     volumes:
       - /run/dbus:/run/dbus
