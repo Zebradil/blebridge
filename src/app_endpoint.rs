@@ -77,6 +77,26 @@ pub async fn run(
     reads: Arc<Mutex<ProxiedReads>>,
 ) -> bluer::Result<()> {
     adapter.set_powered(true).await?;
+
+    // Centrals connected before this process started keep their LE link (it
+    // lives in the kernel/bluetoothd, not in us) and their CCC subscriptions
+    // point at the *previous* GATT application. BlueZ 5.55 never re-issues
+    // StartNotify to the new application for such clients, so they would stay
+    // connected but receive nothing. Kick them; they reconnect and
+    // re-subscribe. Safe: in Degraded Mode (shared adapter) the App Endpoint
+    // never runs, so the treadmill is never connected on this adapter.
+    for addr in adapter.device_addresses().await.unwrap_or_default() {
+        let Ok(device) = adapter.device(addr) else {
+            continue;
+        };
+        if device.is_connected().await.unwrap_or(false) {
+            tracing::info!(%addr, "disconnecting central left over from previous run");
+            if let Err(e) = device.disconnect().await {
+                tracing::warn!(%addr, error = %e, "stale central disconnect failed");
+            }
+        }
+    }
+
     tracing::info!(
         adapter = adapter.name(),
         name = ble_name,
@@ -114,11 +134,21 @@ pub async fn run(
     };
     let _adv_handle = adapter.advertise(adv).await?;
 
-    // Handles must stay alive; park here. The Link owns the frame sender, so
-    // this future never resolves on its own — the process exits via the Link's
-    // crash-only path (see main::select).
-    std::future::pending::<()>().await;
-    Ok(())
+    // Handles must stay alive, so hold them here — but don't park forever:
+    // BlueZ 5.55 SEGVs (e.g. on app disconnects), systemd restarts it, and our
+    // GATT app + advertisement registrations silently die with the old daemon
+    // while this process keeps running as a zombie. The D-Bus system bus
+    // survives the daemon restart, so property reads still succeed — the only
+    // reliable liveness signal is our advertisement still being registered.
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        if adapter.active_advertising_instances().await? == 0 {
+            return Err(bluer::Error {
+                kind: bluer::ErrorKind::Failed,
+                message: "advertisement vanished (bluetoothd restarted?); exiting for re-registration".into(),
+            });
+        }
+    }
 }
 
 /// A read characteristic whose value is the current proxied bytes selected by
