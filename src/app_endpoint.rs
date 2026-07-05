@@ -272,10 +272,17 @@ fn control_point_char(
                 let connected = connected.clone();
                 async move {
                     let connected_now = connected.load(Ordering::Relaxed);
-                    tracing::info!(value = format!("{value:02x?}"), connected = connected_now, "App Endpoint 2AD9 write received");
+                    tracing::info!(
+                        value = format!("{value:02x?}"),
+                        connected = connected_now,
+                        "App Endpoint 2AD9 write received"
+                    );
                     match command::route(&value, connected_now) {
                         Routed::Forward(bytes) => {
-                            tracing::info!(bytes = format!("{bytes:02x?}"), "2AD9 routing Forward -> Link");
+                            tracing::info!(
+                                bytes = format!("{bytes:02x?}"),
+                                "2AD9 routing Forward -> Link"
+                            );
                             // Link gone (crash-only shutdown) is the only send
                             // failure; log and still ack the ATT write.
                             if let Err(e) = commands.send(bytes).await {
@@ -283,7 +290,10 @@ fn control_point_char(
                             }
                         }
                         Routed::Reject(resp) => {
-                            tracing::info!(resp = format!("{resp:02x?}"), "2AD9 routing Reject -> synth indication");
+                            tracing::info!(
+                                resp = format!("{resp:02x?}"),
+                                "2AD9 routing Reject -> synth indication"
+                            );
                             // Answer immediately over the app's CP indication so
                             // its write reports failure instead of timing out.
                             let _ = frames.send(ForwardFrame {
