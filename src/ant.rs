@@ -47,8 +47,12 @@ pub fn run(core: Arc<Mutex<SdmCore>>, device_number: u16) -> ! {
     let mut backoff = Duration::from_secs(1);
     let mut setup_failures = 0u32;
 
+    let mut first = true;
     loop {
-        match session(&core, device_number, start) {
+        // Reset the stick only on retries: the first attempt after boot assumes a
+        // healthy stick, so we skip the reset and its re-enumeration churn (which
+        // on frequent reconnects would itself keep resetting a working stick).
+        match session(&core, device_number, start, !first) {
             SessionEnd::NoStick => {
                 // A replugged stick is a fresh start, not a repeat failure.
                 setup_failures = 0;
@@ -71,6 +75,7 @@ pub fn run(core: Arc<Mutex<SdmCore>>, device_number: u16) -> ! {
                 tracing::warn!(err, "ANT session ended, retrying in {backoff:?}");
             }
         }
+        first = false;
         std::thread::sleep(backoff);
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
@@ -87,17 +92,24 @@ fn find_stick() -> Option<Device<GlobalContext>> {
     devices.iter().find(is_ant_usb_device_from_device)
 }
 
-fn session(core: &Arc<Mutex<SdmCore>>, device_number: u16, start: Instant) -> SessionEnd {
+fn session(
+    core: &Arc<Mutex<SdmCore>>,
+    device_number: u16,
+    start: Instant,
+    reset: bool,
+) -> SessionEnd {
     let Some(device) = find_stick() else {
         return SessionEnd::NoStick;
     };
     // The stick can wedge at the ANT-chip level: it enumerates and accepts
     // bulk-out commands but never responds (observed 2026-07-05 — "channel
-    // open" logged, zero RF output). A USB port reset before each session
-    // recovers it. If the reset renumbers the device, opening below fails and
-    // the retry loop re-finds the stick.
-    if let Ok(handle) = device.open() {
-        let _ = handle.reset();
+    // open" logged, zero RF output). A USB port reset recovers it, so we reset
+    // before a retry session (`reset`). If the reset renumbers the device,
+    // opening below fails and the retry loop re-finds the stick.
+    if reset {
+        if let Ok(handle) = device.open() {
+            let _ = handle.reset();
+        }
     }
     let mut driver = match UsbDriver::new(device) {
         Ok(d) => d,

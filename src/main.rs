@@ -55,6 +55,15 @@ fn assign_adapters(
             ));
         }
     }
+    // One radio can't do both roles. Pinning both to the same adapter is a
+    // config error, not a silent Degraded-Mode fallback.
+    if let (Some(l), Some(a)) = (link_override, app_override) {
+        if l == a {
+            return Err(format!(
+                "BLEBRIDGE_LINK_ADAPTER and BLEBRIDGE_APP_ADAPTER both set to {l:?}; they need distinct adapters"
+            ));
+        }
+    }
 
     let app_fixed = app_override.map(str::to_string);
     let not_app = |n: &str| Some(n) != app_fixed.as_deref();
@@ -97,7 +106,7 @@ async fn can_advertise(adapter: &bluer::Adapter) -> bool {
     }
     let probe = bluer::adv::Advertisement {
         advertisement_type: bluer::adv::Type::Peripheral,
-        discoverable: Some(true),
+        discoverable: Some(false),
         local_name: Some("blebridge-probe".into()),
         ..Default::default()
     };
@@ -197,16 +206,10 @@ async fn run_ble(
 ) -> bluer::Result<()> {
     let session = bluer::Session::new().await?;
 
-    // Auto-accept pairing so a phone bonds without a manual bluetoothctl confirm.
-    // All-None handlers => NoInputNoOutput agent that accepts every request
-    // (JustWorks, no passkey); request_default routes pairing here rather than to
-    // any interactive agent. Handle held until run_ble returns (i.e. a crash).
-    let _agent = session
-        .register_agent(bluer::agent::Agent {
-            request_default: true,
-            ..Default::default()
-        })
-        .await?;
+    // No pairing agent on purpose: the App Endpoint refuses pairing
+    // (set_pairable(false)) and the treadmill FTMS link needs none, so nothing
+    // here ever bonds — registering an auto-accept agent would only contradict
+    // that stance.
 
     // Exclude known-hostile controllers *before* touching them. A counterfeit
     // CSR8510 (0a12:0001) on the Pi can't advertise or scan, and probing its
@@ -379,6 +382,18 @@ mod tests {
     fn unknown_override_errors() {
         assert!(assign_adapters(names(&["hci0"]), Some("hci9"), None, &adv(&["hci0"])).is_err());
         assert!(assign_adapters(names(&["hci0"]), None, Some("hci9"), &adv(&["hci0"])).is_err());
+    }
+
+    #[test]
+    fn link_and_app_override_same_adapter_errors() {
+        // One radio can't be both roles; pinning both to it is a loud config error.
+        assert!(assign_adapters(
+            names(&["hci0", "hci1"]),
+            Some("hci0"),
+            Some("hci0"),
+            &adv(&["hci0", "hci1"]),
+        )
+        .is_err());
     }
 
     #[test]
