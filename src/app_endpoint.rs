@@ -226,12 +226,14 @@ fn fwd_notify(
         method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
             let mut rx = frames.subscribe();
             async move {
+                tracing::info!(?tag, indicate, "app subscribed to forwarded frames");
                 tokio::spawn(async move {
                     loop {
                         match rx.recv().await {
                             Ok(f) if f.char == tag => {
-                                if notifier.notify(f.bytes).await.is_err() {
-                                    break; // app unsubscribed / disconnected
+                                if let Err(e) = notifier.notify(f.bytes).await {
+                                    tracing::info!(?tag, error = %e, "notify failed; app unsubscribed / disconnected");
+                                    break;
                                 }
                             }
                             Ok(_) => {} // frame for a different characteristic
@@ -263,13 +265,17 @@ fn control_point_char(
         uuid: ftms::FITNESS_MACHINE_CONTROL_POINT,
         write: Some(CharacteristicWrite {
             write: true,
+            write_without_response: true,
             method: CharacteristicWriteMethod::Fun(Box::new(move |value, _req| {
                 let frames = write_frames.clone();
                 let commands = commands.clone();
                 let connected = connected.clone();
                 async move {
-                    match command::route(&value, connected.load(Ordering::Relaxed)) {
+                    let connected_now = connected.load(Ordering::Relaxed);
+                    tracing::info!(value = format!("{value:02x?}"), connected = connected_now, "App Endpoint 2AD9 write received");
+                    match command::route(&value, connected_now) {
                         Routed::Forward(bytes) => {
+                            tracing::info!(bytes = format!("{bytes:02x?}"), "2AD9 routing Forward -> Link");
                             // Link gone (crash-only shutdown) is the only send
                             // failure; log and still ack the ATT write.
                             if let Err(e) = commands.send(bytes).await {
@@ -277,6 +283,7 @@ fn control_point_char(
                             }
                         }
                         Routed::Reject(resp) => {
+                            tracing::info!(resp = format!("{resp:02x?}"), "2AD9 routing Reject -> synth indication");
                             // Answer immediately over the app's CP indication so
                             // its write reports failure instead of timing out.
                             let _ = frames.send(ForwardFrame {
@@ -291,7 +298,12 @@ fn control_point_char(
             })),
             ..Default::default()
         }),
-        notify: Some(fwd_notify(FwdChar::ControlPoint, frames, true)),
+        // ponytail: FTMS wants indicate here, but BlueZ 5.55's GATT server cannot
+        // deliver indications at all — the app-emitted Value never becomes an ATT
+        // indication and the notify session dies with "device has stopped the
+        // notification session" (verified via dbus-monitor + btmon). Notify-only
+        // is off-spec but deliverable; revert to indicate once BlueZ >= 5.56.
+        notify: Some(fwd_notify(FwdChar::ControlPoint, frames, false)),
         ..Default::default()
     }
 }

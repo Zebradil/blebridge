@@ -14,6 +14,8 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use bluer::gatt::remote::CharacteristicWriteRequest;
+use bluer::gatt::WriteOp;
 use bluer::{Adapter, AdapterEvent, Address, Device, Uuid};
 use futures_util::{stream::select_all, StreamExt};
 
@@ -196,8 +198,15 @@ async fn serve(
                 let Some(bytes) = cmd else { continue };
                 match &control_point {
                     Some(cp) => {
-                        if let Err(e) = cp.write(&bytes).await {
-                            tracing::warn!("Control Point write to treadmill failed: {e}");
+                        tracing::info!(bytes = format!("{bytes:02x?}"), "forwarding Control Command to treadmill 2AD9");
+                        // FTMS Control Point requires ATT Write Request; bluer's
+                        // write() defaults to Write Command, which the treadmill
+                        // accepts at ATT level but silently ignores (no
+                        // indication, no belt action).
+                        let req = CharacteristicWriteRequest { op_type: WriteOp::Request, ..Default::default() };
+                        match cp.write_ext(&bytes, &req).await {
+                            Ok(()) => tracing::info!("Control Command written to treadmill 2AD9 OK"),
+                            Err(e) => tracing::warn!("Control Point write to treadmill failed: {e}"),
                         }
                     }
                     // Connected but the treadmill has no Control Point (rare).
