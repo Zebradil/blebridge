@@ -91,6 +91,14 @@ fn session(core: &Arc<Mutex<SdmCore>>, device_number: u16, start: Instant) -> Se
     let Some(device) = find_stick() else {
         return SessionEnd::NoStick;
     };
+    // The stick can wedge at the ANT-chip level: it enumerates and accepts
+    // bulk-out commands but never responds (observed 2026-07-05 — "channel
+    // open" logged, zero RF output). A USB port reset before each session
+    // recovers it. If the reset renumbers the device, opening below fails and
+    // the retry loop re-finds the stick.
+    if let Ok(mut handle) = device.open() {
+        let _ = handle.reset();
+    }
     let mut driver = match UsbDriver::new(device) {
         Ok(d) => d,
         Err(e) => return SessionEnd::SetupFailed(format!("open usb device: {e:?}")),
@@ -101,7 +109,15 @@ fn session(core: &Arc<Mutex<SdmCore>>, device_number: u16, start: Instant) -> Se
     }
     tracing::info!(device_number, "ANT channel open, broadcasting SDM pages");
 
+    // An open master channel emits EventTx every ~246 ms; prolonged silence
+    // means the stick wedged mid-session — bail so the retry path resets it.
+    const TX_SILENCE_LIMIT: Duration = Duration::from_secs(10);
+    let mut last_tx = Instant::now();
+
     loop {
+        if last_tx.elapsed() > TX_SILENCE_LIMIT {
+            return SessionEnd::TxFailed("no EventTx for 10s (stick wedged?)".into());
+        }
         match driver.get_message() {
             // Driver reads are non-blocking (1 ms USB timeout); nap between
             // polls so the ~4 Hz TX loop doesn't spin a core.
@@ -109,6 +125,7 @@ fn session(core: &Arc<Mutex<SdmCore>>, device_number: u16, start: Instant) -> Se
             Ok(Some(msg)) => {
                 if let RxMessage::ChannelEvent(ev) = &msg.message {
                     if ev.payload.message_code == MessageCode::EventTx {
+                        last_tx = Instant::now();
                         let timestamp = start.elapsed().as_secs_f64();
                         let page = core
                             .lock()
