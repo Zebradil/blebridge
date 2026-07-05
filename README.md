@@ -41,6 +41,13 @@ The Raspberry Pi 3B has one onboard Bluetooth adapter (hci0, BT 5.0). A second U
   # Let a phone that "forgot" the bridge re-pair without manually wiping the
   # stale bond on the Pi (default "never" makes re-pairing loop forever).
   JustWorksRepairing = always
+
+  [GATT]
+  # Disable EATT. bluetoothd otherwise opens an Enhanced ATT channel (PSM
+  # 0x27) to every connected phone; EATT requires encryption, so the kernel
+  # follows up with an SMP Security Request and the phone shows a pairing
+  # prompt. FTMS needs no pairing at all (a real treadmill never prompts).
+  Channels = 1
   ```
 
 - Recommended: auto-restart bluetoothd on crash (BlueZ 5.55 can SEGV on
